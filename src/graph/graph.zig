@@ -42,10 +42,13 @@ pub const Graph = struct {
 		const number_of_nodes: u32 = std.fmt.parseInt(u32,splits.next() orelse return GraphError.NotPACEFormat,10) catch {
 			return GraphError.NotPACEFormat;
 		};
-		var final_split = std.mem.split(u8,splits.next() orelse return GraphError.NotPACEFormat,"\n");
-		const number_of_edges = if(final_split.next()) |edges| std.fmt.parseInt(u32,edges,10) catch {
+
+		const edges_string_version = splits.next() orelse return GraphError.NotPACEFormat;
+		const index_of_end = std.mem.indexOf(u8,edges_string_version,"\n") orelse return GraphError.NotPACEFormat;
+
+		const number_of_edges = std.fmt.parseInt(u32,edges_string_version[0..index_of_end],10) catch {
 				return GraphError.NotPACEFormat;
-		} else return GraphError.NotPACEFormat;
+		};
 		
 		std.log.info("Loaded graph {s} with bytes len {}", .{filename,buffer.len});
 		
@@ -80,8 +83,8 @@ test "Check simple failed loading" {
 	defer std.debug.assert(!allocator.deinit());
 
 	var graph = Graph.load_from_pace(allocator.allocator(),"instances/tiny/tiny001.graph") catch |err| {
-		// Loading should fail
-		std.debug.assert(err == error.FileNotFound);
+		// Loading should fail with file not found
+		try std.testing.expectEqual(err,error.FileNotFound);
 		return;
 	};
 	_ = graph;

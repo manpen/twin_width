@@ -21,8 +21,9 @@ pub fn build(b: *std.Build) void {
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
-        .optimize = optimize,
+        .optimize = optimize
     });
+		exe.single_threaded = true;
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -59,9 +60,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const exe_bench = b.addTest(.{
+				.name = "zig_bench",
+        .root_source_file = .{ .path = "src/bench.zig" },
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+		exe_bench.test_runner = "src/bench.zig";
+
+		const run_bench_step = exe_bench.run();
+
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
+    const bench_step = b.step("bench", "Run benchmarks");
     test_step.dependOn(&exe_tests.step);
+    bench_step.dependOn(&run_bench_step.step);
 }

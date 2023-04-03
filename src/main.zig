@@ -3,65 +3,37 @@ const graph = @import("graph/graph.zig");
 const bitset = @import("util/two_level_bitset.zig");
 comptime { _ = @import("graph/graph.zig"); }
 comptime { _ = @import("util/two_level_bitset.zig"); }
+comptime { _ = @import("util/compressed_bitmap.zig"); }
 const builtin = @import("builtin");
 
 pub fn main() !void {
 		var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-		//var std_bitset = try std.bit_set.DynamicBitSet.initEmpty(gpa.allocator(),3_000_000);
-		var std_bitset = try bitset.FastBitSet.initEmpty(3_000_000,gpa.allocator());
+		defer _ = gpa.deinit();
 
-
-//		var i:u32 = 0;
-		//while(i < 1000) : (i+=1) {
-		//	std_bitset.set(@intCast(u32,rnd.next())%3_000_000);
-		//	var iter = std_bitset.consuming_iter();
-		//	while(iter.next()) |item| {
-		//		std.debug.print("Item {}\n",.{item});
-		//	}
-		//}
-		
-		//var i:u32 = 0;
-		//while(i < 100_000_000) : (i+=1) {
-		//	std_bitset.set(1_500_000+i%1_400_000);
-		//	std_bitset.unset(1_500_000+i%1_400_000);
-		//}
-
-		var i:u32 = 0;
-		var calc:u64 = 0;
-		while(i < 3_000_000) : (i+=1) {
-			std_bitset.set(100);
-			std_bitset.set(2_999_999);
-			std_bitset.set(1_999_999);
-			var iter = std_bitset.iter();
-			//var iter = std_bitset.iterator(.{});
-			while(iter.next()) |item| {
-				calc+=@intCast(u64,item);
-			}
-			std_bitset.unset(100);
-			std_bitset.unset(2_999_999);
-			std_bitset.unset(1_999_999);
-		}
-
-		std.debug.print("Calc: {}\n",.{calc});
-
-		//var allocation = try std.os.mmap(null, 512*1024*1024, std.os.PROT.READ | std.os.PROT.WRITE, std.os.MAP.PRIVATE | std.os.MAP.ANONYMOUS | std.os.MAP.POPULATE | 0x40, -1,0);
+		var allocator = gpa.allocator();
+		var allocation = try allocator.alloc(u8, 500*1024*1024);
+		//var allocation = try std.os.mmap(null, 1000*1024*1024, std.os.PROT.READ | std.os.PROT.WRITE, std.os.MAP.PRIVATE | std.os.MAP.ANONYMOUS | 0x40, -1,0);
 		//defer std.os.munmap(allocation);
 
-		//var make_fixed_out_of_it = std.heap.FixedBufferAllocator.init(allocation);
+		var make_fixed_out_of_it = std.heap.FixedBufferAllocator.init(allocation);
+		std.debug.print("Allocated memory!\n",.{});
 
-		// Load the graph from the file
-		//var loaded_graph = graph.Graph.loadFromPace(make_fixed_out_of_it.allocator(),"instances/heuristic-public/heuristic_002.gr") catch |err| {
+		//Load the graph from the file
+		var loaded_graph = graph.Graph.loadFromPace(make_fixed_out_of_it.allocator(),"instances/heuristic-public/heuristic_200.gr") catch |err| {
 			//Print error message if the graph could not be loaded
-			//std.log.info("Could not load graph: {}", .{err});
-			//return err;
-		//};
+			std.log.info("Could not load graph: {}", .{err});
+			return err;
+		};
+		std.debug.print("Loaded graph!\n",.{});
 
-		//var i: u32 = loaded_graph.number_of_nodes-1;
-		//var tww: u32 = 0;
-		//while(i > 0) {
-		//	tww = std.math.max(try loaded_graph.addContraction(i-1,loaded_graph.number_of_nodes-1),tww);
-		//	i-=1;
-		//}
+		var i: u32 = loaded_graph.number_of_nodes-1;
+		var tww: u32 = 0;
+		while(i > 0) {
+			tww = std.math.max(try loaded_graph.addContraction(i-1,loaded_graph.number_of_nodes-1),tww);
+			i-=1;
+			std.debug.print("I {} twin width {}\n",.{i,tww});
+		}
+		std.debug.print("tww {}\n",.{tww});
 }
 
 test "simple test" {

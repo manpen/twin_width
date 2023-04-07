@@ -24,6 +24,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize
     });
 		exe.single_threaded = true;
+		exe.addIncludePath("src/tww");
+
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -59,6 +61,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+		exe_tests.addIncludePath("src/tww");
 
     const exe_bench = b.addTest(.{
 				.name = "zig_bench",
@@ -67,6 +70,7 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast,
     });
 		exe_bench.test_runner = "src/bench.zig";
+		exe_bench.addIncludePath("src/tww");
 
 		const run_bench_step = exe_bench.run();
 

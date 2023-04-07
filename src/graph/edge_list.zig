@@ -1,321 +1,224 @@
 const std = @import("std");
 const bitset = @import("../util/two_level_bitset.zig");
+const comptime_util = @import("../util/comptime_checks.zig");
 
-pub const EdgeListType = enum {
+pub const EdgeListType = enum(u8) {
 	bitmap,
 	list
 };
 
-pub const BitmapEdgeList = struct {
-	edges: bitset.FastBitSet
-};
+pub fn ParametrizedUnsortedArrayList(comptime T: type) type {
+	if (!comptime_util.checkIfIsCompatibleInteger(T)) {
+		@compileError("Type must either be u8,16 or u32!");
+	}
 
-pub const ListEdgeList = struct {
-	const Self = @This();
-	edges: std.ArrayList(u32),
-	trailing_edges: bool,
+	return struct {
+		const Self = @This();
+		edges: std.ArrayListUnmanaged(T),
+		pub inline fn initCapacity(allocator: std.mem.Allocator, size: u32) !Self {
+			std.debug.assert(size>0);
+			var list = try std.ArrayListUnmanaged(T).initCapacity(allocator,size);
 
+			return Self {
+				.edges = list
+			};
+		}
 
-	pub const ListEdgeListIterator = struct {
-		index: u32,
-		edge_list: *const ListEdgeList,
-		pub fn next(self: *ListEdgeListIterator) ?u32 {
-			while(true) {
-				if(self.index>=self.edge_list.edges.items.len) {
-					return null;
-				}
-				const item = self.edge_list.edges.items[self.index];
+		pub inline fn init() Self {
+			var list = std.ArrayListUnmanaged(T){};
+
+			return Self {
+				.edges = list
+			};
+		}
+
+		pub const ParametrizedUnsortedArrayListIterator = struct {
+			index: u32,
+			list: *const Self,
+			pub inline fn next(self: *ParametrizedUnsortedArrayListIterator) ?T {
+				if(self.index>=self.list.edges.items.len) return null;
+				const item = self.list.edges.items[self.index];
 				self.index+=1;
-				if((item&0x80000000) != 0) {
-					continue;
-				}
 				return item;
 			}
-		}
-	};
+		};
 
-	pub inline fn compactList(self: *Self) void {
-		if(self.trailing_edges) {
-			var i:u32 = 0;
-			var writePtr:u32 = 0;
+		pub inline fn intoSorted(self: *Self) ParametrizedSortedArrayList(T) {
+			std.sort.sort(T,self.edges.items,{}, comptime std.sort.asc(T));
+			return ParametrizedSortedArrayList(T) {
+				.edges = self.edges
+			};
+		}
+
+		pub inline fn iterator(self: *const Self) ParametrizedUnsortedArrayListIterator {
+			return ParametrizedUnsortedArrayListIterator {
+				.index = 0,
+				.list = self
+			};
+		}
+
+		pub inline fn add(self: *Self, allocator: std.mem.Allocator, item: T) !void {
+			try self.edges.append(allocator,item);
+		}
+
+		pub inline fn cardinality(self: *const Self) u32 {
+			return @intCast(u32,self.edges.items.len);
+		}
+
+		pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+			self.edges.deinit(allocator);
+		}
+
+		pub inline fn contains(self: *const Self, item: T) bool {
+			return self.nodePosition(item).@"0";
+		}
+
+		pub inline fn nodePosition(self: *const Self, item: T) struct{bool,u32} {
+			var i: u32 = 0;
 			while(i < self.edges.items.len) : (i+=1) {
-				self.edges.items[writePtr] = self.edges.items[i];
-				if((self.edges.items[writePtr]&0x80000000)==0) {
-					writePtr+=1;
+				if(self.edges.items[i] == item) {
+					return .{true,i};
 				}
 			}
-			self.trailing_edges = false;
-			self.edges.shrinkRetainingCapacity(writePtr);
+			return .{false,self.edges.items.len};
 		}
-	}
 
-	pub inline fn cardinality(self: *Self) u32 {
-		self.compactList();
-		return self.edges.items.len;
-	}
-
-	pub inline fn iterator(self: *const Self) ListEdgeListIterator {
-		return ListEdgeListIterator {
-			.index = 0,
-			.edge_list = self
-		};
-	}
-
-	pub inline fn markForRemove(self: *Self, node_id: u32) void {
-		var i:u32 = 0;
-		while(i < self.edges.items.len) : (i+=1) {
-			if(self.edges.items[i] == node_id) {
-				self.edges.items[i] |= 0x80000000;
-				self.trailing_edges = true;
+		pub inline fn remove(self: *Self, item: T) bool {
+			const result = self.nodePosition(item);
+			if(result.@"0" == true) {
+				self.edges.orderedRemove(result.@"1");
 			}
-			else if(self.edges.items[i] > node_id) {
-				return;
-			}
+			return result.@"0";
 		}
-	}
-
-	pub inline fn add(self: *Self, node_id: u32) !bool {
-		var i:u32 = 0;
-		while(i < self.edges.items.len) {
-			if(self.edges.items[i] == node_id) {
-				return false;
-			}
-			else if(self.edges.items[i] > node_id) {
-				try self.edges.insert(i,node_id);
-				return true;
-			}
-			i+=1;
-		}
-	}
-};
-
-pub fn EdgeListXorIterator(comptime X: type, comptime Y: type) type {
-	return struct {
-		const currentType = @This();
-iterator: X,
-						iterator_2: Y,
-						item: ?u32,
-						item_2: ?u32,
-						pub inline fn next(self: *currentType) ?u32 {
-							while(self.item!=null and self.item_2!=null) {
-								if(self.item.? < self.item_2.?) {
-									const return_item = self.item;
-									self.item = self.iterator.next();
-									return return_item;
-								}
-								else if(self.item.? > self.item_2.?) {
-									const return_item = self.item_2;
-									self.item_2 = self.iterator_2.next();
-									return return_item;					
-								}
-
-								self.item = self.iterator.next();
-								self.item_2 = self.iterator_2.next();
-							}
-							if(self.item != null) {
-								const ret = self.item;
-								self.item = null;
-								return ret;
-							}
-							if(self.item_2 != null) {
-								const ret = self.item_2;
-								self.item_2 = null;
-								return ret;
-							}
-
-							while(self.iterator.next()) |item| {
-								return item;
-							}
-							while(self.iterator_2.next()) |item| {
-								return item;
-							}
-							return null;
-						}
 	};
 }
 
-pub const XorIteratorTag = enum {
-	bitmap_bitmap,
-	list_bitmap,
-	list_list
-};
-
-pub const XorIterator = union(XorIteratorTag) {
-	const Self = @This();
-	bitmap_bitmap: EdgeListXorIterator(bitset.FastBitSetIterator, bitset.FastBitSetIterator),
-	list_bitmap: EdgeListXorIterator(ListEdgeList.ListEdgeListIterator, bitset.FastBitSetIterator),
-	list_list: EdgeListXorIterator(ListEdgeList.ListEdgeListIterator, ListEdgeList.ListEdgeListIterator),
-
-	pub inline fn next(self: *Self) ?u32 {
-		switch(self.*) {
-			.bitmap_bitmap => return self.bitmap_bitmap.next(),
-			.list_bitmap => return self.list_bitmap.next(),
-			.list_list => return self.list_list.next(),
-		}
+pub fn ParametrizedSortedArrayList(comptime T: type) type {
+	if (!comptime_util.checkIfIsCompatibleInteger(T)) {
+		@compileError("Type must either be u8,16 or u32!");
 	}
-};
 
-pub const EdgeListIterator = union(EdgeListType) {
-	const Self = @This();
-	bitmap: bitset.FastBitSetIterator,
-	list: ListEdgeList.ListEdgeListIterator,
+	return struct {
+		const Self = @This();
+		edges: std.ArrayListUnmanaged(T),
+		pub inline fn initCapacity(allocator: std.mem.Allocator, size: u32) !Self {
+			std.debug.assert(size>0);
+			var list = try std.ArrayListUnmanaged(T).initCapacity(allocator,size);
 
-	pub inline fn next(self: *Self) ?u32 {
-		switch(self.*) {
-			.bitmap => return self.bitmap.next(),
-			.list => return self.list.next()
-		}
-	}
-};
-
-pub const EdgeList = union(EdgeListType) {
-	const Self = @This();
-	bitmap: BitmapEdgeList,
-	list: ListEdgeList,
-	
-	var thresholdPromote:u32 = 0;
-	var thresholdDegrade:u32 = 0;
-	var problemSize:u32 = std.math.maxInt(u32);
-
-	pub fn initCapacity(capacity: u32, allocator: std.mem.Allocator) EdgeList {
-		std.debug.assert(EdgeList.problemSize != std.math.maxInt(u32));
-
-		if(capacity >= EdgeList.thresholdPromote) {
-			return EdgeList {
-				.bitmap = BitmapEdgeList {
-					.edges = bitset.FastBitSet.initCapacity(EdgeList.problemSize, allocator)
-				}
+			return Self {
+				.edges = list
 			};
 		}
-		else {
-			return EdgeList {
-				.list = ListEdgeList {
-					.edges = std.ArrayList(u32).initCapacity(allocator,capacity)
-				}
+
+		pub const ParametrizedSortedArrayListIterator = struct {
+			index: u32,
+			list: *const Self,
+			pub inline fn next(self: *ParametrizedSortedArrayListIterator) ?T {
+				if(self.index>=self.list.edges.items.len) return null;
+				const item = self.list.edges.items[self.index];
+				self.index+=1;
+				return item;
+			}
+		};
+
+		pub inline fn iterator(self: *const Self) ParametrizedSortedArrayListIterator {
+			return ParametrizedSortedArrayListIterator {
+				.index = 0,
+				.list = self
 			};
 		}
-	}
 
-	pub fn deinit(self: *Self) void {
-		switch(self.*) {
-			.bitmap => self.bitmap.edges.deinit(),
-			.list => self.list.edges.deinit()
+		pub inline fn xorIterator(self: *const Self, other: *const Self) ParametrizedSortedArrayListXorIterator {
+			var iterator_first = self.iterator();
+			var iterator_second = other.iterator();
+			return ParametrizedSortedArrayListXorIterator {
+				.iterator_first = iterator_first,
+				.iterator_second = iterator_second,
+				.item_first = iterator_first.next(),
+				.item_second = iterator_second.next(),
+			};
 		}
-	}
 
-	pub inline fn cardinality(self: *Self) u32 {
-		switch(self.*) {
-			.bitmap => return self.bitmap.cardinality(),
-			.list => return self.list.cardinality()
-		}
-	}
-
-	pub inline fn iterator(self: *Self) EdgeListIterator {
-		switch(self.*) {
-			.bitmap => return EdgeListIterator {
-				.bitmap = self.bitmap.edges.iterator()
-			},
-			.list => return EdgeListIterator {
-				.list = self.list.iterator()
-			}
-		}
-	}
-
-	pub inline fn xorIterator(self: *Self, other: *Self) XorIterator {
-		switch(self.*) {
-			.bitmap => switch(other.*) {
-				.bitmap => {
-					var iter_1 = self.bitmap.edges.iterator();
-					var iter_2 = other.bitmap.edges.iterator();
-					const item_1 = iter_1.next();
-					const item_2 = iter_2.next();
-					return XorIterator {
-						.bitmap_bitmap = EdgeListXorIterator(bitset.FastBitSetIterator,bitset.FastBitSetIterator) {
-							.iterator = iter_1,
-							.iterator_2 = iter_2,
-							.item = item_1,
-							.item_2 = item_2
-						}
-					};
-				},
-				.list => {
-					var iter_1 = self.bitmap.edges.iterator();
-					var iter_2 = other.list.iterator();
-					const item_1 = iter_1.next();
-					const item_2 = iter_2.next();
-					return XorIterator {
-						.list_bitmap = EdgeListXorIterator(ListEdgeList.ListEdgeListIterator,bitset.FastBitSetIterator) {
-							.iterator = iter_1,
-							.iterator_2 = iter_2,
-							.item = item_1,
-							.item_2 = item_2
-						}
-					};
-
-				},
-			},
-			.list => switch(other.*) {
-				.list => {
-					var iter_1 = self.list.iterator();
-					var iter_2 = other.list.iterator();
-					const item_1 = iter_1.next();
-					const item_2 = iter_2.next();
-					return XorIterator {
-						.list_bitmap = EdgeListXorIterator(ListEdgeList.ListEdgeListIterator,ListEdgeList.ListEdgeListIterator) {
-							.iterator = iter_1,
-							.iterator_2 = iter_2,
-							.item = item_1,
-							.item_2 = item_2
-						}
-					};
-				},
-				.bitmap => {
-					var iter_1 = self.list.edges.iterator();
-					var iter_2 = other.bitmap.iterator();
-					const item_1 = iter_1.next();
-					const item_2 = iter_2.next();
-					return XorIterator {
-						.list_bitmap = EdgeListXorIterator(ListEdgeList.ListEdgeListIterator,bitset.FastBitSetIterator) {
-							.iterator = iter_1,
-							.iterator_2 = iter_2,
-							.item = item_1,
-							.item_2 = item_2
-						}
-					};
-				}
-			}
-		}
-	}
-
-
-	pub inline fn remove(self: *Self, node_id: u32) void {
-		switch(self.*) {
-			.bitmap => self.bitmap.edges.unset(node_id),
-			.list => self.list.edges.markForRemove(node_id),
-		}
-	}
-	
-	pub inline fn add(self: *Self, node_id: u32) !void {
-		switch(self.*) {
-			.bitmap => self.bitmap.edges.set(node_id),
-			.list => {
-				self.list.edges.add(node_id);
-				// Promote to bitmap if becoming quite dense
-				if(self.list.edges.items.len >= EdgeList.thresholdPromote) {
-					var bitmap = BitmapEdgeList {
-						.edges = bitset.FastBitSet.initCapacity(EdgeList.problemSize, self.list.edges.allocator)
-					};
-
-					var iter = self.list.edges.iterator();
-					while(iter.next()) |item| {
-						bitmap.set(item);
+		pub const ParametrizedSortedArrayListXorIterator = struct {
+			iterator_first: ParametrizedSortedArrayListIterator,
+			iterator_second: ParametrizedSortedArrayListIterator,
+			item_first: ?T,
+			item_second: ?T,
+			first: bool,
+			pub inline fn next(self: *ParametrizedSortedArrayListXorIterator) ?T {
+				while(self.item!=null and self.item_second!=null) {
+					if(self.item.? < self.item_second.?) {
+						const return_item_first = self.item;
+						self.item_first= self.iterator.next();
+						self.first = true;
+						return return_item_first;
 					}
-					self.list.edges.deinit();
-					self.* = EdgeList {
-						.bitmap = bitmap
-					};
+					else if(self.item.? > self.item_second.?) {
+						const return_item_second = self.item_second;
+						self.item_second = self.iterator_2.next();
+						self.first = false;
+						return return_item_second;
+					}
+
+					self.item_first= self.iterator.next();
+					self.item_second = self.iterator_2.next();
 				}
-			},
+
+				if(self.item_second != null) {
+					const ret = self.item_second;
+					self.item_second = self.iterator_2.next();
+					self.first = false;
+					return ret;
+				}
+				else if(self.item_first != null) {
+					const ret = self.item;
+					self.item_first= self.iterator.next();
+					self.first = true;
+					return ret;
+				}
+				return null;
+			}
+		};
+
+		pub inline fn add(self: *Self, allocator: std.mem.Allocator, item: T) !bool {
+			const result = self.nodePosition(item);
+			if(result.@"0" == false) {
+				try self.edges.insert(allocator,result.@"1",item);
+			}
+			return result.@"0";
 		}
-	}
-};
+
+		pub inline fn cardinality(self: *const Self) u32 {
+			return @intCast(u32,self.edges.len);
+		}
+
+		pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+			self.edges.deinit(allocator);
+		}
+
+		pub inline fn contains(self: *const Self, item: T) bool {
+			return self.nodePosition(item).@"0";
+		}
+
+		pub inline fn nodePosition(self: *const Self, item: T) struct{bool,u32} {
+			var i: u32 = 0;
+			while(i < self.edges.items.len) : (i+=1) {
+				if(self.edges.items[i] == item) {
+					return .{true,i};
+				}
+				else if(self.edges.items[i] > item) {
+					return .{false,i};
+				}
+			}
+			return .{false,@intCast(u32,self.edges.items.len)};
+		}
+
+		pub inline fn remove(self: *Self, item: T) bool {
+			const result = self.nodePosition(item);
+			if(result.@"0" == true) {
+				self.edges.orderedRemove(result.@"1");
+			}
+			return result.@"0";
+		}
+	};
+}

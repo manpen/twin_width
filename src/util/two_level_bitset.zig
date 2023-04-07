@@ -31,12 +31,38 @@ pub const FastBitSetIterator = struct {
 			 }
 };
 
+pub const FastBitSetZeroIterator = struct {
+	const Self = @This();
+	coerced_ptr: [*]u64,
+	length: usize,
+	current: u64,
+	index: u32,
+	max_index: u32,
+	pub inline fn next(self: *Self) ?u32 {
+		while(self.current==0) {
+			self.index+=1;
+			if(self.index>=self.length) {
+				return null;
+			}
+			self.current = ~self.coerced_ptr[self.index];
+		}
+
+		const next_index = @ctz(self.current) + (self.index<<6);
+		self.current &= self.current - 1;
+		if(next_index>=self.max_index) {
+			return null;
+		}
+		return next_index;
+	}
+};
+
 pub const FastBitSet = struct {
 		const Self = @This();
 		storage: []u64,
 		storage_higher: []u64,
 		allocator: std.mem.Allocator,
 		cardinality: u32,
+		total_len: u32,
 
 		pub inline fn initEmpty(size: u32, allocator: std.mem.Allocator) !Self {
 			var ensure_aligned = (size>>6)+1;
@@ -44,6 +70,7 @@ pub const FastBitSet = struct {
 			var storage = try allocator.alignedAlloc(u64,32,ensure_aligned);
 			errdefer allocator.free(storage);
 			var storage_higher = try allocator.alignedAlloc(u64,32,ensure_higher);
+			errdefer allocator.free(storage_higher);
 			std.mem.set(u64,storage,0);
 			std.mem.set(u64,storage_higher,0);
 
@@ -52,6 +79,26 @@ pub const FastBitSet = struct {
 				.storage = storage,
 				.storage_higher = storage_higher,
 				.cardinality = 0,
+				.total_len = size
+			};
+		}
+
+		pub inline fn copy(self: *const Self, allocator: std.mem.Allocator) !Self {
+			var ensure_aligned = self.storage.len;
+			var ensure_higher = self.storage_higher.len;
+			var storage = try allocator.alignedAlloc(u64,32,ensure_aligned);
+			errdefer allocator.free(storage);
+			var storage_higher = try allocator.alignedAlloc(u64,32,ensure_higher);
+			errdefer allocator.free(storage_higher);
+			std.mem.copy(u64,storage,self.storage);
+			std.mem.copy(u64,storage_higher,self.storage_higher);
+
+			return Self {
+				.allocator = allocator,
+				.storage = storage,
+				.storage_higher = storage_higher,
+				.cardinality = self.cardinality,
+				.total_len = self.total_len
 			};
 		}
 
@@ -72,6 +119,16 @@ pub const FastBitSet = struct {
 			};
 		}
 
+		pub inline fn iterUnset(self: *Self) FastBitSetZeroIterator {
+			return FastBitSetZeroIterator {
+				.coerced_ptr = self.storage.ptr,
+				.length = self.storage.len,
+				.max_index = self.total_len,
+				.current = ~self.storage[0],
+				.index = 0,
+			};
+		}
+
 
 		pub inline fn set(self: *Self, index: u32) void {
 			const overflow:u6 = @intCast(u6,index&0x3F);
@@ -80,20 +137,38 @@ pub const FastBitSet = struct {
 			const new_index_higher = index>>12;
 			const before = self.storage[new_index];
 			self.storage[new_index] |= @as(u64,1)<<overflow;
+			self.storage_higher[new_index_higher] |= @as(u64,1)<<overflow_higher;
 			if((before&@as(u64,1)<<overflow)==0) {
 				self.cardinality+=1;
 			}
-			self.storage_higher[new_index_higher] |= @as(u64,1)<<overflow_higher;
 		}
 
-		pub inline fn unset(self: *Self, index: u32) void {
+
+		pub inline fn setExists(self: *Self, index: u32) bool {
+			const overflow:u6 = @intCast(u6,index&0x3F);
+			const new_index = index>>6;
+			const overflow_higher:u6 = @intCast(u6,new_index&0x3F);
+			const new_index_higher = index>>12;
+			const before = self.storage[new_index];
+			self.storage[new_index] |= @as(u64,1)<<overflow;
+			self.storage_higher[new_index_higher] |= @as(u64,1)<<overflow_higher;
+			if((before&@as(u64,1)<<overflow)==0) {
+				self.cardinality+=1;
+				return false;
+			}
+			return true;
+		}
+
+		pub inline fn unset(self: *Self, index: u32) bool {
 			const overflow:u6 = @intCast(u6,index&0x3F);
 			const new_index = index>>6;
 			const before = self.storage[new_index];
 			self.storage[new_index] &= ~(@as(u64,1)<<overflow);
 			if((before&(@as(u64,1)<<overflow))!=0) {
 				self.cardinality-=1;
+				return true;
 			}
+			return false;
 		}
 
 		pub inline fn get(self: *Self, index: u32) bool {
@@ -103,9 +178,32 @@ pub const FastBitSet = struct {
 		}
 
 		pub inline fn unsetAll(self: *Self) void {
-			std.mem.set(u64,self.storage,0);
-			std.mem.set(u64,self.storage_higher,0);
-			self.cardinality = 0;
+			if(self.cardinality > 0) {
+				std.mem.set(u64,self.storage,0);
+				std.mem.set(u64,self.storage_higher,0);
+				self.cardinality = 0;
+			}
+		}
+
+		pub inline fn setUnion(self: *Self, other: *Self) void {
+			if(other.cardinality < (self.storage.len>>8)) {
+				var iterator = other.iter();
+				while(iterator.next()) |item| {
+					self.set(item);
+				}
+			}
+			else {
+				const length = std.math.min(self.storage.len,other.storage.len);
+				var i:u32 = 0;
+				while(i < length) : (i+=1) {
+					self.storage[i] |= other.storage[i];
+				}
+				const length_higher = std.math.min(self.storage_higher.len,other.storage_higher.len);
+				i=0;
+				while(i < length_higher) : (i+=1) {
+					self.storage_higher[i] |= other.storage_higher[i];
+				}
+			}
 		}
 };
 

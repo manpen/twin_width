@@ -131,6 +131,13 @@ pub fn Pace2023Fmt(comptime T: type) type {
                 node.edges = edge_list.ParametrizedUnsortedArrayList(T).init();
             }
 
+						errdefer {
+							for(nodes) |*node| {
+								node.edges.deinit(allocator);
+							}
+						}
+
+						var edge_count: u32 = 0;
             while (line_splitter.next()) |line| {
                 if (line.len == 0 or line[0] == 'c') {
                     // Skip comments
@@ -147,9 +154,17 @@ pub fn Pace2023Fmt(comptime T: type) type {
                     return PaceError.NodeIdsTooLarge;
                 }
 
+								if(edge_count >= number_of_edges) {
+									return PaceError.TooManyEdges;
+								}
+								edge_count+=1;
+
                 try nodes[node_id].edges.add(allocator, @intCast(T,second_node_id));
                 try nodes[second_node_id].edges.add(allocator, @intCast(T,node_id));
             }
+						if(edge_count < number_of_edges) {
+							return PaceError.TooFewEdges;
+						}
 
             return .{ .number_of_nodes = number_of_nodes, .number_of_edges = number_of_edges, .nodes = nodes };
         }
@@ -159,7 +174,7 @@ pub fn Pace2023Fmt(comptime T: type) type {
         }
 
         pub fn deinitAllIncludingEdges(self: *const Self, allocator: std.mem.Allocator) void {
-            for (self.nodes) |node| {
+            for (self.nodes) |*node| {
                 node.edges.deinit(allocator);
             }
             allocator.free(self.nodes);
@@ -174,7 +189,7 @@ test "Check pace format" {
     defer std.debug.assert(!gpa.deinit());
 
     const pace = try Pace2023Fmt(u8).fromString(gpa.allocator(), "p tww 10 2\n2 1\n2 3\n");
-    defer pace.deinit(gpa.allocator());
+    defer pace.deinitAllIncludingEdges(gpa.allocator());
     try expectEqual(pace.number_of_nodes, 10);
     try expectEqual(pace.number_of_edges, 2);
 }
@@ -184,7 +199,7 @@ test "Check pace edge count" {
     defer std.debug.assert(!gpa.deinit());
 
     const pace = try Pace2023Fmt(u8).fromString(gpa.allocator(), "p tww 10 2\n2 1\n2 3\n");
-    defer pace.deinit(gpa.allocator());
+    defer pace.deinitAllIncludingEdges(gpa.allocator());
     try expectEqual(pace.number_of_nodes, 10);
     try expectEqual(pace.number_of_edges, 2);
 
@@ -198,15 +213,15 @@ test "Check pace edges" {
     defer std.debug.assert(!gpa.deinit());
 
     const pace = try Pace2023Fmt(u8).fromString(gpa.allocator(), "p tww 10 2\n2 1\n2 3\n");
-    defer pace.deinit(gpa.allocator());
+    defer pace.deinitAllIncludingEdges(gpa.allocator());
     try expectEqual(pace.number_of_nodes, 10);
     try expectEqual(pace.number_of_edges, 2);
 
     try expectEqual(pace.nodes[0].edges.edges.items[0], 1);
     try expectEqual(pace.nodes[0].edges.edges.items.len, 1);
 
-    try expectEqual(pace.nodes[1].edges.edges.items[1], 0);
-    try expectEqual(pace.nodes[1].edges.edges.items[2], 2);
+    try expectEqual(pace.nodes[1].edges.edges.items[0], 0);
+    try expectEqual(pace.nodes[1].edges.edges.items[1], 2);
     try expectEqual(pace.nodes[1].edges.edges.items.len, 2);
 
     try expectEqual(pace.nodes[2].edges.edges.items[0], 1);
@@ -239,7 +254,7 @@ test "Check pace load tiny 005" {
     defer std.debug.assert(!gpa.deinit());
 
     const pace = try Pace2023Fmt(u8).fromFile(gpa.allocator(), "test/pace_2023/tiny005.gr");
-    defer pace.deinit(gpa.allocator());
+    defer pace.deinitAllIncludingEdges(gpa.allocator());
 
     try expectEqual(pace.number_of_nodes, 25);
     try expectEqual(pace.number_of_edges, 40);

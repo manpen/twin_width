@@ -8,6 +8,7 @@ const RetraceableContractionSequence = @import("../tww/retraceable_contraction_s
 const connected_components = @import("connected_component.zig");
 const Node = @import("node.zig").Node;
 const bfs_mod = @import("bfs.zig");
+const compressed_bitset = @import("../util/compressed_bitmap.zig");
 
 const pace_2023 = @import("../pace_2023/pace_fmt.zig");
 
@@ -27,11 +28,16 @@ pub fn Graph(comptime T: type) type {
 		@compileError("T must either be u8,u16 or u32!");
 	};
 
+	const promote_thresh = comptime if(T == u8) 0 else if(T==u16) 200 else 200;
+	const degrade_tresh = comptime if(T == u8) 0 else if(T==u16) 100 else 100;
+
+	const NodeType = Node(T,promote_thresh,degrade_tresh);
+
 	return struct {
 		const Self = @This();
 		number_of_nodes: u32,
 		number_of_edges: u32,
-		node_list: []Node(T),
+		node_list: []NodeType,
 		erased_nodes: bitset.FastBitSet,
 		scratch_bitset: bitset.FastBitSet,
 		connected_components: std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)),
@@ -65,19 +71,165 @@ pub fn Graph(comptime T: type) type {
 	pub fn reverseLastContraction(self: *Self) !void {
 		_ = self;
 	}
+
+	pub inline fn calculateUniqueKey(self: *Self, first: T, second: T) u64 {
+		const first_large:u64 = first;
+		const second_large:u64 = second;
+		if(first < second) {
+			return second_large*@intCast(u64,self.number_of_nodes)+first_large;
+		}
+		else {
+			return first_large*@intCast(u64,self.number_of_nodes)+second_large;
+		}
+	}
+
+
+	pub const InducedTwinWidth = struct {
+		tww: T,
+		erased_red_edges: T
+	};
+
+	pub fn calculateInducedTww(self: *Self, erased: T, survivor: T, upper_bound: ?T) InducedTwinWidth {
+		if(upper_bound) |ub| {
+			const black_edge_cardinality_erased = self.node_list[erased].black_edges.cardinality();
+			const black_edge_cardinality_survivor = self.node_list[survivor].black_edges.cardinality();
+
+			//heuristic_024.gr
+
+			var black_distance:T = 0;
+			if(black_edge_cardinality_erased > black_edge_cardinality_survivor) {
+				black_distance = black_edge_cardinality_erased - black_edge_cardinality_survivor;
+			}
+			else {
+				black_distance = black_edge_cardinality_survivor - black_edge_cardinality_erased;
+			}
+			const min_red_dist = std.math.min(self.node_list[erased].red_edges.cardinality(),self.node_list[survivor].red_edges.cardinality());
+
+
+			// Fast exit
+			if(black_distance+min_red_dist >= ub) {
+				return InducedTwinWidth {
+					.tww = black_distance+min_red_dist,
+					.erased_red_edges = 0
+				};
+			}
+		}
+
+
+
+		var red_iter = self.node_list[erased].red_edges.xorIterator(&self.node_list[survivor].red_edges);
+		var delta_red:T = 0;
+		var correction_factor:T = 0;
+
+		while(red_iter.next()) |item| {
+			if(item != survivor and item != erased) {
+				delta_red+=1;
+			}
+			else {
+				correction_factor=1;	
+			}
+		}
+		
+		// TODO: Maybe factor in newly created red edges!
+		const reduced_red_edges = (self.node_list[erased].red_edges.cardinality()+self.node_list[survivor].red_edges.cardinality())-(delta_red+correction_factor);
+
+
+		var tww: T = 0;
+		var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+		while(black_iter.next()) |item| {
+			if(item == survivor or item == erased) {
+				continue;
+			}
+			// Came from erased
+			if(black_iter.first) {
+				if(!self.node_list[survivor].red_edges.contains(item)) {
+					delta_red+=1;
+					tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+				}
+			}
+			// Came from survivor
+			else {
+				delta_red+=1;
+				tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+			}
+		}
+
+		tww = std.math.max(tww,delta_red);
+		return InducedTwinWidth {
+			.tww = tww,
+			.erased_red_edges = reduced_red_edges
+		};
+	}
+
 	pub fn addContraction(self: *Self, erased: T, survivor: T) !T {
-		_ = self;
-		_ = survivor;
-		_ = erased;
-		return 0;
+		if(self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
+			return GraphError.InvalidContractionOneNodeErased;
+		}
+		self.erased_nodes.set(erased);
+		var red_iter = self.node_list[erased].red_edges.iterator();
+		while(red_iter.next()) |item| {
+			if(item != survivor) {
+				if(!try self.node_list[survivor].red_edges.addExists(self.allocator,item)) {
+					try self.node_list[item].red_edges.add(self.allocator,survivor);
+				}
+			}
+			_ = try self.node_list[item].red_edges.remove(self.allocator,erased);
+		}
+
+
+		var tww: T = 0;
+		var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+		var remove_list = std.ArrayList(T).init(self.allocator);
+		defer remove_list.deinit();
+
+		while(black_iter.next()) |item| {
+			if(item == survivor or item == erased) {
+				continue;
+			}
+			// Came from erased
+			if(black_iter.first) {
+				if(!try self.node_list[survivor].red_edges.addExists(self.allocator,item)) {
+					try self.node_list[item].red_edges.add(self.allocator,survivor);
+				}
+			}
+			// Came from survivor
+			else {
+				try self.node_list[survivor].red_edges.add(self.allocator,item);
+				try self.node_list[item].red_edges.add(self.allocator,survivor);
+				
+				_ = try self.node_list[item].black_edges.remove(self.allocator,survivor);
+				try remove_list.append(item);
+			}
+			tww = std.math.max(tww,@intCast(T,self.node_list[item].red_edges.cardinality()));
+		}
+
+		for(remove_list.items) |item| {
+			_ = try self.node_list[survivor].black_edges.remove(self.allocator,item);
+		}
+
+		var black_remove_iter = self.node_list[erased].black_edges.iterator();
+		while(black_remove_iter.next()) |item| {
+			_ = try self.node_list[item].black_edges.remove(self.allocator,erased);
+		}
+
+		tww = std.math.max(tww,@intCast(T,self.node_list[survivor].red_edges.cardinality()));
+		try self.contraction.addContraction(erased,survivor,std.math.max(tww,self.contraction.getTwinWidth()));
+		return tww;
+	}
+
+	pub fn solveGreedy(self: *Self) !T {
+		var largest_cc = self.connected_components_min_heap.remove();
+		return try self.connected_components.items[largest_cc.index].solveGreedy(self);
 	}
 
 	pub fn new(number_of_nodes: T, allocator: std.mem.Allocator) !Self {
-		var node_list = try allocator.alloc(Node(T),number_of_nodes);
+		var node_list = try allocator.alloc(NodeType,number_of_nodes);
 		
 		for(node_list) |*node| {
-			node.black_edges = try edge_list.ParametrizedSortedArrayList(T).initCapacity(allocator,2);
-			node.red_edges = try edge_list.ParametrizedUnsortedArrayList(T).initCapacity(allocator,2);
+			node.black_edges = try compressed_bitset.FastCompressedBitmap(T,promote_thresh,degrade_tresh).init(number_of_nodes);
+			node.red_edges = try compressed_bitset.FastCompressedBitmap(T,promote_thresh,degrade_tresh).init(number_of_nodes);
 		}
 
 		//TODO: Add some errdefer's here
@@ -91,21 +243,25 @@ pub fn Graph(comptime T: type) type {
 			.erased_nodes = try bitset.FastBitSet.initEmpty(number_of_nodes,allocator),
 			.connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){},
 			.connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T),void,connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator,{}),
-			.contraction = try RetraceableContractionSequence(T).init(allocator,number_of_nodes)
+			.contraction = try RetraceableContractionSequence(T).init(allocator,number_of_nodes),
 		};
 
 		return graph;
+	}
+
+	pub inline fn density(self: *const Self) f64 {
+		return (2*@intToFloat(f64,self.number_of_edges))/(@intToFloat(f64,self.number_of_nodes)*@intToFloat(f64,self.number_of_nodes-1));
 	}
 
 	pub fn loadFromPace(allocator: std.mem.Allocator, filename: []const u8) !Self {
 		const pace = try pace_2023.Pace2023Fmt(T).fromFile(allocator, filename);
 		defer pace.deinit(allocator);
 
-		var node_list = try allocator.alloc(Node(T),pace.number_of_nodes);
+		var node_list = try allocator.alloc(NodeType,pace.number_of_nodes);
 		
 		for(0..pace.number_of_nodes) |index| {
-			node_list[index].black_edges = pace.nodes[index].edges.intoSorted();
-			node_list[index].red_edges = edge_list.ParametrizedUnsortedArrayList(T).init();
+			node_list[index].black_edges = try compressed_bitset.FastCompressedBitmap(T,promote_thresh,degrade_tresh).fromUnsorted(allocator, &pace.nodes[index].edges, @intCast(T,pace.number_of_nodes));
+			node_list[index].red_edges = compressed_bitset.FastCompressedBitmap(T,promote_thresh,degrade_tresh).init(@intCast(T,pace.number_of_nodes));
 		}
 
 		// Remove allocations on failure
@@ -127,7 +283,7 @@ pub fn Graph(comptime T: type) type {
 			.scratch_bitset = try bitset.FastBitSet.initEmpty(pace.number_of_nodes,allocator),
 			.connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){},
 			.connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T),void,connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator,{}),
-			.contraction = try RetraceableContractionSequence(T).init(allocator,pace.number_of_nodes)
+			.contraction = try RetraceableContractionSequence(T).init(allocator,pace.number_of_nodes),
 		};
 	}
 
@@ -169,8 +325,11 @@ pub fn Graph(comptime T: type) type {
 		}
 
 		var tww = self.connected_components_min_heap.remove();
-		std.debug.print("Found {} components largest {} and tww {}\n",.{components, largest, tww});
+		std.debug.print("Found {} components largest {} and tww {} density {}\n",.{components, largest, tww.tww,self.density()});
+		try self.connected_components_min_heap.add(tww);
 	}
+
+
 
 	pub fn deinit(self: *Self) void {
 		for(self.node_list) |*node| {
@@ -182,8 +341,8 @@ pub fn Graph(comptime T: type) type {
 		}
 		self.connected_components.deinit(self.allocator);
 		self.contraction.deinit();
-		self.scratch_bitset.deinit();
-		self.erased_nodes.deinit();
+		self.scratch_bitset.deinit(self.allocator);
+		self.erased_nodes.deinit(self.allocator);
 		self.allocator.free(self.node_list);
 	}
 	};
@@ -220,7 +379,7 @@ test "Test contraction Tiny 1" {
 			try std.testing.expectEqual(@as(u32,1),tww);
 		}
 		else {
-			try std.testing.expectEqual(@as(u32,1),tww);
+			try std.testing.expectEqual(@as(u32,0),tww);
 		}
 		i-=1;
 	}
@@ -244,10 +403,10 @@ test "Test contraction Tiny 2" {
 			try std.testing.expectEqual(@as(u32,2),tww);
 		}
 		else if(i>1) {
-			try std.testing.expectEqual(@as(u32,2),tww);
+			try std.testing.expectEqual(@as(u32,1),tww);
 		}
 		else {
-			try std.testing.expectEqual(@as(u32,2),tww);
+			try std.testing.expectEqual(@as(u32,0),tww);
 		}
 		i-=1;
 	}
@@ -271,10 +430,10 @@ test "Test contraction retrace Tiny 2" {
 			try std.testing.expectEqual(@as(u32,2),tww);
 		}
 		else if(i>1) {
-			try std.testing.expectEqual(@as(u32,2),tww);
+			try std.testing.expectEqual(@as(u32,1),tww);
 		}
 		else {
-			try std.testing.expectEqual(@as(u32,2),tww);
+			try std.testing.expectEqual(@as(u32,0),tww);
 		}
 		i-=1;
 	}

@@ -1,420 +1,264 @@
 const std = @import("std");
-
-
-const MAX_SPARSE_BUCKET_SIZE = 100;
+const comptime_util = @import("../util/comptime_checks.zig");
+const edge_list = @import("../graph/edge_list.zig");
+const two_level_bitset = @import("../util/two_level_bitset.zig");
 
 pub const CompressedBitmapBucketTag = enum(u8) {
-	bitmap,
-	array,
-	empty
+	bitset,
+	array
 };
 
-pub const BucketBitmap = struct {
-	const Self = @This();
-	storage: []u64,
-	cardinality: u32,
-	pub const BucketBitmapIterator = struct {
-		const Self = @This();
-		coerced_ptr: [*]u64,
-		length: usize,
-		current: u64,
-		index: u32,
-		pub inline fn next(self: *BucketBitmapIterator) ?u32 {
-			while(self.current == 0) {
-				self.index+=1;
-				if(self.index>=self.length) {
-					return null;
-				}
-				self.current = self.coerced_ptr[self.index];
-			}
-			const next_higher_index = @ctz(self.current) + (self.index<<6);
-			self.current&= self.current - 1;
-			return next_higher_index;
-		}
+
+pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, comptime degrade_threshold: u32) type {
+	comptime if(!comptime_util.checkIfIsCompatibleInteger(T)) {
+		@compileError("Type must either be u8,u16 or u32");
 	};
 
-	pub inline fn initEmpty(allocator: std.mem.Allocator) !BucketBitmap {
-		var mem  = try allocator.alloc(u64,(65565>>6));
-		std.mem.set(u64,mem,0);
-		return BucketBitmap {
-			.storage = mem,
-			.cardinality = 0
-		};
-	}
-
-	pub inline fn get(self: *const Self, index: u32) bool {
-		const u64_index = index>>6;
-		const bit_index:u6 = @intCast(u6,(index&0x3F));
-		return (self.storage[u64_index] & (@as(u64,1)<<bit_index)) != 0;
-	}
-
-	pub inline fn iterator(self: *const Self) BucketBitmapIterator {
-		return BucketBitmapIterator {
-			.coerced_ptr = @ptrCast([*]u64,self.storage.ptr),
-			.length = self.storage.len,
-			.current = self.storage[0],
-			.index = 0,
-		};
-	}
-
-	pub inline fn set(self: *Self, index: u32) bool {
-		const u64_index = index>>6;
-		const bit_index:u6 = @intCast(u6,(index&0x3F));
-		const before = self.storage[u64_index];
-		self.storage[u64_index] |= (@as(u64,1)<<bit_index);
-		if((before&(@as(u64,1)<<bit_index))>0) {
-			return false;
-		}
-		self.cardinality+=1;
-		return true;
-	}
+	comptime if(promote_threshold < degrade_threshold) {
+		@compileError("Promote threshold must be larger than degrade threshold!");
+	};
 	
-	pub inline fn unset(self: *Self, index: u32) bool {
-		const u64_index = index>>6;
-		const bit_index:u6 = @intCast(u6,(index&0x3F));
-		const before = self.storage[u64_index];
-		self.storage[u64_index] &= ~(@as(u64,1)<<bit_index);
-		if((before&((@as(u64,1)<<bit_index))>0)) {
-			self.cardinality-=1;
-			return true;
-		}
-		return false;
 
-	}
-};
-
-pub const BucketArray = struct {
-	const Self = @This();
-	storage: std.ArrayList(u16),
-	pub const BucketArrayIterator = struct {
-		current: u32,
-		bucket: *const BucketArray,
-		pub inline fn next(self: *BucketArrayIterator) ?u32 {
-			if(self.current>=self.bucket.cardinality()) {
-				return null;
-			}
-			const item = self.bucket.storage.items[self.current];
-			self.current+=1;
-			return @as(u32,item);
-		}
-	};
-	pub inline fn get(self: *const Self, index: u32) bool {
-		for(self.storage.items) |item| {
-			if(item==index) {
-				return true;
-			}
-			else if(item>index) {
-				return false;
-			}
-		}
-		return false;
-	}
-
-	pub inline fn set(self: *Self, index: u32) !bool {
-		var i:u32 = 0;
-		while(i<self.storage.items.len): (i+=1) {
-			if(self.storage.items[i] > index)	{
-				try self.storage.insert(i,@intCast(u16,index));
-				return true;
-			}
-			else if(self.storage.items[i]==index) {
-				return false;
-			}
-		}
-		try self.storage.append(@intCast(u16,index));
-		return true;
-	}
-
-	pub inline fn unset(self: *Self, index: u32) bool {
-		var i:u32 = 0;
-		while(i<self.storage.items.len): (i+=1) {
-			if(self.storage.items[i] == index)	{
-				_ = self.storage.orderedRemove(i);
-				return true;
-			}
-			else if(self.storage.items[i] > index) {
-				return false;
-			}
-		}
-		return false;
-	}
-
-	pub inline fn iterator(self: *const Self) BucketArrayIterator {
-		return BucketArrayIterator {
-			.current = 0,
-			.bucket = self
-		};
-	}
-
-	pub inline fn cardinality(self: *const Self) u32 {
-		return @intCast(u32,self.storage.items.len);
-	}
-
-};
-
-
-pub const CompressedBucket = union(CompressedBitmapBucketTag) {
-	bitmap: BucketBitmap,
-	array: BucketArray,
-	empty: void
-};
-
-pub const BucketEmptyIterator = struct {
-	pub inline fn next(self: *const BucketEmptyIterator) ?u32 {
-		_ = self;
-		return null;
-	}
-};
-
-pub const CompressedBucketIterator = union(CompressedBitmapBucketTag) {
-	const Self = @This();
-	bitmap: BucketBitmap.BucketBitmapIterator,
-	array: BucketArray.BucketArrayIterator,
-	empty: BucketEmptyIterator,
-	pub inline fn next(self: *Self) ?u32 {
-		return switch(self.*) {
-			.bitmap => |*bitmap| bitmap.next(),
-			.array => |*array| array.next(),
-			.empty => |empty| empty.next(),
-		};
-	}
-};
-
-pub const CompressedBitmap = struct {
+	return struct {
 		const Self = @This();
-		buckets: []CompressedBucket,
-		allocator: std.mem.Allocator,
-		cardinality: u32,
+		storage: StorageRepresentation,
+		max_size: T,
 
-		pub const CompressedBitmapIterator = struct {
-			bucket: u32,
-			bitmap: *const CompressedBitmap,
-			iterator: CompressedBucketIterator,
-			pub inline fn next(self: *CompressedBitmapIterator) ?u32 {
-				while(true) {
-					if(self.iterator.next()) |item| {
-						return item+(self.bucket<<16);
-					}
-					else {
-						self.bucket+=1;
-						if(self.bucket >= self.bitmap.buckets.len) {
-							return null;
-						}
-						self.iterator = switch(self.bitmap.buckets[self.bucket]) {
-							.bitmap => |bucket_b| CompressedBucketIterator {
-								.bitmap = bucket_b.iterator()
-							},
-							.array => |bucket_a| CompressedBucketIterator {
-								.array = bucket_a.iterator(),
-							},
-							.empty => {
-								continue;
-							}
-						};
-					}
+		pub const StorageRepresentation = union(CompressedBitmapBucketTag) {
+			bitset: two_level_bitset.FastBitSet,
+			array: edge_list.ParametrizedSortedArrayList(T),
+
+			pub inline fn deinit(self: *StorageRepresentation, allocator: std.mem.Allocator) void {
+				switch(self.*) {
+					.bitset => self.bitset.deinit(allocator),
+					.array => self.array.deinit(allocator),
 				}
 			}
-		};
-		pub const CompressedBitmapXORIterator = struct {
-			iterator: CompressedBitmapIterator,
-			iterator_2: CompressedBitmapIterator,
-			item: ?u32,
-			item_2: ?u32,
-			pub inline fn next(self: *CompressedBitmapXORIterator) ?u32 {
-				while(self.item!=null and self.item_2!=null) {
-					if(self.item.? < self.item_2.?) {
-						const return_item = self.item;
-						self.item = self.iterator.next();
-						return return_item;
-					}
-					else if(self.item.? > self.item_2.?) {
-						const return_item = self.item_2;
-						self.item_2 = self.iterator_2.next();
-						return return_item;					
-					}
 
-					self.item = self.iterator.next();
-					self.item_2 = self.iterator_2.next();
-				}
-				if(self.item != null) {
-					const ret = self.item;
-					self.item = null;
-					return ret;
-				}
-				if(self.item_2 != null) {
-					const ret = self.item_2;
-					self.item_2 = null;
-					return ret;
-				}
 
-				while(self.iterator.next()) |item| {
-					return item;
+		pub inline fn add(self: *StorageRepresentation, allocator: std.mem.Allocator, item: T) !void {
+			switch(self.*) {
+				.bitset => {
+					self.bitset.set(item);
+				},
+				.array => {
+					_ = try self.array.add(allocator,item);
 				}
-				while(self.iterator_2.next()) |item| {
-					return item;
-				}
-				return null;
 			}
+		}
+
+		pub inline fn addExists(self: *StorageRepresentation, allocator: std.mem.Allocator, item: T) !bool {
+			switch(self.*) {
+				.bitset => {
+					return self.bitset.setExists(item);
+				},
+				.array => {
+					return try self.array.add(allocator,item);
+				}
+			}
+		}
+
+
+		pub inline fn contains(self: *StorageRepresentation, item: T) bool {
+			switch(self.*) {
+				.bitset => return self.bitset.get(item),
+				.array => return self.array.contains(item),
+			}
+		}
+		pub inline fn remove(self: *StorageRepresentation, item: T) bool {
+			switch(self.*) {
+				.bitset => return self.bitset.unset(item),
+				.array => return self.array.remove(item),
+			}
+		}
+
+		pub inline fn cardinality(self: *StorageRepresentation) T {
+			switch(self.*) {
+				.bitset => return @intCast(T,self.bitset.cardinality),
+					.array => return @intCast(T,self.array.cardinality()),
+			}
+		}
 		};
 
-		pub inline fn xor_iterator(self: *const Self, other: *const Self) CompressedBitmapXORIterator {
-			var iter = self.iterator();
-			const item = iter.next();
-			var iter2 = other.iterator();
-			var item_2 = iter2.next();
-			return CompressedBitmapXORIterator {
-				.item = item,
-				.iterator = iter,
-				.item_2 = item_2,
-				.iterator_2 = iter2
+		pub fn init(max_size: T) Self {
+			return Self {
+				.storage = StorageRepresentation {.array = edge_list.ParametrizedSortedArrayList(T).init()},
+				.max_size = max_size
 			};
 		}
 
-		pub inline fn iterator(self: *const Self) CompressedBitmapIterator {
-			switch(self.buckets[0]) {
-				.bitmap => |bucket| {
-					return CompressedBitmapIterator {
-						.bucket = 0,
-						.bitmap = self,
-						.iterator = CompressedBucketIterator {
-							.bitmap = bucket.iterator()
-						}
-					};
-				},
-				.array => |bucket| {
-					return CompressedBitmapIterator {
-						.bucket = 0,
-						.bitmap = self,
-						.iterator = CompressedBucketIterator {
-							.array = bucket.iterator()
-						}
-					};
-				},
-				.empty => {
-						return CompressedBitmapIterator {
-						.bucket = 0,
-						.bitmap = self,
-						.iterator = CompressedBucketIterator {
-							.empty = BucketEmptyIterator{}
-						}
-					};				
-				}
-			}
-		}
+		pub fn fromUnsorted(allocator: std.mem.Allocator, list: *edge_list.ParametrizedUnsortedArrayList(T),max_size: T) !Self {
+			if(list.cardinality() >= promote_threshold) {
+				var bitset = try two_level_bitset.FastBitSet.initEmpty(max_size,allocator);
 
-		pub inline fn initEmpty(size: u32, allocator: std.mem.Allocator) !CompressedBitmap {
-			const num_buckets = (size>>16)+1;
-			var buckets = try allocator.alloc(CompressedBucket, num_buckets);
-			var i:u32 = 0;
-			if(num_buckets > 1) {
-				while(i < num_buckets) : (i+=1) {
-					buckets[i] = CompressedBucket {
-						.empty = {}
-					};
+				var iter = list.iterator();
+				while(iter.next()) |item| {
+					bitset.set(item);
 				}
+				const container = Self {
+						.storage = StorageRepresentation {.bitset = bitset},
+						.max_size = max_size
+				};
+
+				return container;
+
 			}
 			else {
-				buckets[0] = CompressedBucket {
-					.bitmap = try BucketBitmap.initEmpty(allocator)
+				return Self {
+						.storage = StorageRepresentation {.array = list.intoSorted()},
+						.max_size = max_size
 				};
 			}
+		}
 
-			return CompressedBitmap {
-				.buckets = buckets,
-				.allocator = allocator,
-				.cardinality = 0
+		pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+			self.storage.deinit(allocator);
+		}
+
+		pub const FastCompressedBitmapIterator = union(CompressedBitmapBucketTag) {
+			bitset: two_level_bitset.FastBitSetIterator,
+			array: edge_list.ParametrizedSortedArrayList(T).ParametrizedSortedArrayListIterator,
+			pub inline fn next(self: *FastCompressedBitmapIterator) ?T {
+				switch(self.*) {
+					.bitset => {
+						if(self.bitset.next()) |result| {
+							return @intCast(T,result);
+						}
+						return null;
+					},
+					.array => return self.array.next(),
+				}
+			}
+		};
+
+		pub inline fn iterator(self: *const Self) FastCompressedBitmapIterator {
+			switch(self.storage) {
+				.bitset => return FastCompressedBitmapIterator {.bitset = self.storage.bitset.iter()},
+				.array => return FastCompressedBitmapIterator {.array = self.storage.array.iterator()},
+			}
+		}
+
+		pub inline fn xorIterator(self: *const Self, other: *const Self) FastCompressedBitmapXorIterator {
+			var iterator_first = self.iterator();
+			var iterator_second = other.iterator();
+			const item_first = iterator_first.next();
+			const item_second = iterator_second.next();
+			return FastCompressedBitmapXorIterator {
+				.iterator_first = iterator_first,
+				.iterator_second = iterator_second,
+				.item_first = item_first,
+				.item_second = item_second,
+				.first = false
 			};
 		}
 
-		pub inline fn get(self: *Self, index: u32) bool {
-			const bucket_index = index&0xFFFF;
-			const bucket = index>>16;
-			switch(self.buckets[bucket]) {
-				.bitmap => |bitmap_bucket| {
-					return bitmap_bucket.get(bucket_index);
-				},
-				.array => |array_bucket| {
-					return array_bucket.get(bucket_index);
-				},
-				.empty => {
-					return false;
+		pub const FastCompressedBitmapXorIterator = struct {
+			iterator_first: FastCompressedBitmapIterator,
+			iterator_second: FastCompressedBitmapIterator,
+			item_first: ?T,
+			item_second: ?T,
+			first: bool,
+			pub inline fn next(self: *FastCompressedBitmapXorIterator) ?T {
+				while(self.item_first!=null and self.item_second!=null) {
+					if(self.item_first.? < self.item_second.?) {
+						const return_item_first = self.item_first;
+						self.item_first= self.iterator_first.next();
+						self.first = true;
+						return return_item_first;
+					}
+					else if(self.item_first.? > self.item_second.?) {
+						const return_item_second = self.item_second;
+						self.item_second = self.iterator_second.next();
+						self.first = false;
+						return return_item_second;
+					}
+
+					self.item_first= self.iterator_first.next();
+					self.item_second = self.iterator_second.next();
 				}
-			}
-		}
 
-		pub inline fn unset(self: *Self, index: u32) void {
-			const bucket_index = index&0xFFFF;
-			const bucket = index>>16;
-			switch(self.buckets[bucket]) {
-				.bitmap => |*bitmap_bucket| {
-					if(bitmap_bucket.unset(bucket_index)) {
-						self.cardinality-=1;
-					}
-				},
-				.array => |*array_bucket| {
-					if(array_bucket.unset(bucket_index)) {
-						self.cardinality-=1;
-					}
-				},
-				.empty => {}
-			}
-		}
-		
-		pub inline fn set(self: *Self, index: u32) !void {
-			const bucket_index = index&0xFFFF;
-			const bucket = index>>16;
-			switch(self.buckets[bucket]) {
-				.bitmap => |*bitmap_bucket| {
-					if(bitmap_bucket.set(bucket_index)) {
-						self.cardinality+=1;
-					}
-				},
-				.array => |*array_bucket| {
-					if(try array_bucket.set(bucket_index)) {
-						self.cardinality+=1;
-					}
-					if(array_bucket.cardinality() > MAX_SPARSE_BUCKET_SIZE) {
-						var bitmap_bucket = try BucketBitmap.initEmpty(self.allocator);
-
-						var iterator_arr = array_bucket.iterator();
-						while(iterator_arr.next()) |item| {
-							_ = bitmap_bucket.set(item);
-						}
-						array_bucket.storage.deinit();
-						self.buckets[bucket] = CompressedBucket {
-							.bitmap = bitmap_bucket
-						};
-					}
-				},
-				.empty => {
-					var bucket_arr = BucketArray {
-						.storage = std.ArrayList(u16).init(self.allocator)
-					};
-					_ = try bucket_arr.set(bucket_index);
-					self.cardinality+=1;
-					self.buckets[bucket] = CompressedBucket {
-						.array = bucket_arr
-					};
+				if(self.item_second != null) {
+					const ret = self.item_second;
+					self.item_second = self.iterator_second.next();
+					self.first = false;
+					return ret;
 				}
-			}
-		}
-
-		pub fn deinit(self: *Self) void {
-			for(self.buckets) |*bucket| {
-				switch(bucket.*) {
-					.bitmap => |bitmap_bucket| {
-						self.allocator.free(bitmap_bucket.storage);
-					},
-					.array => |array_bucket| {
-						array_bucket.storage.deinit();
-					},
-					.empty => {}
+				else if(self.item_first != null) {
+					const ret = self.item_first;
+					self.item_first= self.iterator_first.next();
+					self.first = true;
+					return ret;
 				}
+				return null;
 			}
-			self.allocator.free(self.buckets);
-		}
-};
+		};
 
+		pub inline fn forAll(self: *const Self, comptime ctx: type, comptime fnc: fn (ctx,T) callconv(.Inline) void, context: ctx) void {
+			switch(self.storage) {
+				.bitset => {
+					var iter = self.storage.bitset.iter();
+					while(iter.next()) |result| {
+						fnc(context,result);
+					}
+				},
+				.array => {
+					var iter = self.storage.array.iterator();
+					while(iter.next()) |result| {
+						fnc(context,result);
+					}
+				},
+			}
+		}
+
+		pub inline fn add(self: *Self, allocator: std.mem.Allocator, item: T) !void {
+			try self.storage.add(allocator,item);
+			try self.checkPromote(allocator);
+		}
+
+		inline fn checkPromote(self: *Self, allocator: std.mem.Allocator) !void {
+			if(self.storage.cardinality() >= promote_threshold and self.storage == .array) {
+				var iter = self.storage.array.iterator();
+				var bitset = try two_level_bitset.FastBitSet.initEmpty(self.max_size,allocator);
+				while(iter.next()) |value| {
+					bitset.set(value);
+				}
+				self.storage.array.deinit(allocator);
+
+				self.storage = StorageRepresentation {.bitset = bitset};
+			}
+		}
+
+		pub inline fn addExists(self: *Self, allocator: std.mem.Allocator, item: T) !bool {
+			const result = try self.storage.addExists(allocator,item);
+			try self.checkPromote(allocator);
+			return result;
+		}
+
+		pub inline fn contains(self: *Self, item: T) bool {
+			return self.storage.contains(item);
+		}
+
+		pub inline fn cardinality(self: *Self) T {
+			return self.storage.cardinality();
+		}
+
+		pub inline fn remove(self: *Self, allocator: std.mem.Allocator, item: T) !bool {
+			if(self.storage.remove(item)) {
+				// Degrade storage to array 
+				if(degrade_threshold > self.cardinality() and self.storage == .bitset) {
+					var bitset = self.storage.bitset.iter();
+					var array = try edge_list.ParametrizedSortedArrayList(T).initCapacity(allocator,self.storage.bitset.cardinality);
+					while(bitset.next()) |value| {
+						array.edges.append(allocator,@intCast(T,value)) catch unreachable;
+					}
+					self.storage = StorageRepresentation {.array = array};
+				}
+				return true;
+			}
+			return false;
+		}
+	};
+}
 
 test "CompressedBitmap: Check get" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -422,120 +266,132 @@ test "CompressedBitmap: Check get" {
 
 
 
-	var empty = try CompressedBitmap.initEmpty(2000,gpa.allocator());
-	defer empty.deinit();	
+	var empty = FastCompressedBitmap(u16,4,6).init(2000);
+	defer empty.deinit(gpa.allocator());	
 
-	var i:u32 = 0;
+	var i:u16 = 0;
 	while(i<2000) : (i+=1) {
-		std.debug.assert(empty.get(i) == false);
+		std.debug.assert(empty.contains(i) == false);
 	}
-	try std.testing.expectEqual(empty.cardinality,0);
+	try std.testing.expectEqual(empty.cardinality(),0);
 }
 
 test "CompressedBitmap: Check set" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 	defer std.debug.assert(!gpa.deinit());
 
+	var empty = FastCompressedBitmap(u16,4,6).init(2000);
+	defer empty.deinit(gpa.allocator());	
 
-
-	var empty = try CompressedBitmap.initEmpty(2000,gpa.allocator());
-	defer empty.deinit();	
-
-	var i:u32 = 0;
+	var i:u16 = 0;
 	while(i<2000) : (i+=1) {
-		try empty.set(i);
+		try empty.add(gpa.allocator(),i);
 	}
 	i = 0;
 	while(i<2000) : (i+=1) {
-		std.debug.assert(empty.get(i) == true);
+		std.debug.assert(empty.contains(i) == true);
 	}
-	try std.testing.expectEqual(empty.cardinality,2000);
+	try std.testing.expectEqual(empty.cardinality(),2000);
 }
 
-test "CompressedBitmap: Check iterator" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+test "CompressedBitmap: Check large" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{
+		.enable_memory_limit = true
+	}){};
+	gpa.requested_memory_limit = 4000;
 	defer std.debug.assert(!gpa.deinit());
 
+	var empty = FastCompressedBitmap(u32,9,11).init(3_000_000);
+	defer empty.deinit(gpa.allocator());	
 
+	var i:u16 = 0;
+	while(i<20) : (i+=1) {
+		try empty.add(gpa.allocator(),i);
+	}
+	i = 0;
+	while(i<20) : (i+=1) {
+		std.debug.assert(empty.contains(i) == true);
+	}
+	_ = try empty.remove(gpa.allocator(),0);
+	i = 0;
+	while(i<20) : (i+=1) {
+		if(i==0) {
+			std.debug.assert(empty.contains(i) == false);
+		}
+		else {
+			std.debug.assert(empty.contains(i) == true);
+		}
+	}
+	try std.testing.expectEqual(empty.cardinality(),19);
+	std.debug.print("Bytes {}\n",.{gpa.total_requested_bytes});
+}
 
-	var empty = try CompressedBitmap.initEmpty(2000,gpa.allocator());
-	defer empty.deinit();	
+test "CompressedBitmap: Check large iterator" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{
+		.enable_memory_limit = true
+	}){};
+	gpa.requested_memory_limit = 4000;
+	defer std.debug.assert(!gpa.deinit());
+
+	var empty = FastCompressedBitmap(u32,9,11).init(3_000_000);
+	defer empty.deinit(gpa.allocator());	
+
+	var i:u16 = 0;
+	while(i<20) : (i+=2) {
+		try empty.add(gpa.allocator(),i);
+	}
+	var iterator = empty.iterator();
+	i=0;
+	while(iterator.next()) |item| {
+		std.debug.assert(item == i);
+		i+=2;
+	}
+
+	try std.testing.expectEqual(empty.cardinality(),10);
+	std.debug.print("Bytes {}\n",.{gpa.total_requested_bytes});
+}
+
+pub inline fn checkInline(ctx: *u64, result: u32) void {
+	ctx.*+=result;
+}
+
+test "bench: CompressedBitmap: Check large iterator" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{
+	}){};
+	defer std.debug.assert(!gpa.deinit());
+
+	var empty = FastCompressedBitmap(u32,10,12).init(10_000_000);
+	defer empty.deinit(gpa.allocator());	
 
 	var i:u32 = 0;
-	var check:u32 = 0;
-	while(i<2000) : (i+=100) {
-		try empty.set(i);
-		check+=i;
+	while(i<10_000_000) : (i+=100) {
+		try empty.add(gpa.allocator(),i);
+	}
+	var iterator = empty.iterator();
+
+	var count:u64 = 0;
+	while(iterator.next()) |item| {
+		count+=item;
 	}
 
-	var iter = empty.iterator();
-	var calc: u32 = 0;
-	while(iter.next()) |item| {
-		calc+=item;
-	}
-
-	try std.testing.expectEqual(calc,check);
-	try std.testing.expectEqual(empty.cardinality,20);
+	try std.testing.expectEqual(count,499995000000);
 }
 
-const builtin = @import("builtin");
-test "bench: CompressedBitmap: 3M iterator" {
-	if(builtin.mode != std.builtin.OptimizeMode.ReleaseFast) {
-		return error.SkipZigTest;
-	}
+test "bench: CompressedBitmap: Check large iterator inline" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{
-		.enable_memory_limit = true,
 	}){};
-	gpa.requested_memory_limit = 5000;
-	defer _ = gpa.deinit();
-	var std_bitset = try CompressedBitmap.initEmpty(3_000_000,gpa.allocator());
+	defer std.debug.assert(!gpa.deinit());
 
-	var calc:u64 = 0;
-	var i:u64 = 0;
-	while(i<1000) : (i+=1) {
-		try std_bitset.set(100);
-		try std_bitset.set(900);
-		try std_bitset.set(1_500_000);
-		var iter = std_bitset.iterator();
-		while(iter.next()) |item| {
-			calc+=@intCast(u64,item);
-		}
+	var empty = FastCompressedBitmap(u32,10,12).init(10_000_000);
+	defer empty.deinit(gpa.allocator());	
+
+	var i:u32 = 0;
+	while(i<10_000_000) : (i+=100) {
+		try empty.add(gpa.allocator(),i);
 	}
 
-	try std.testing.expectEqual(calc,(1000+1_500_000)*1000);
-	try std.testing.expectEqual(std_bitset.cardinality,3);
-}
+	var count:u64 = 0;
+	empty.forAll(*u64,checkInline,&count);
 
-test "bench: CompressedBitmap: 3M xor iterator" {
-	if(builtin.mode != std.builtin.OptimizeMode.ReleaseFast) {
-		return error.SkipZigTest;
-	}
-	var gpa = std.heap.GeneralPurposeAllocator(.{
-		.enable_memory_limit = true,
-	}){};
-	gpa.requested_memory_limit = 10000;
-	defer _ = gpa.deinit();
-	var std_bitset = try CompressedBitmap.initEmpty(3_000_000,gpa.allocator());
-	var second_bitset = try CompressedBitmap.initEmpty(3_000_000,gpa.allocator());
-
-	var calc:u64 = 0;
-	var i:u64 = 0;
-	while(i<1000) : (i+=1) {
-		try std_bitset.set(100);
-		try second_bitset.set(101);
-		try std_bitset.set(900);
-		try second_bitset.set(901);
-		try second_bitset.set(900);
-		try std_bitset.set(1_500_000);
-		try second_bitset.set(1_500_000);
-
-		var iter = std_bitset.xor_iterator(&second_bitset);
-		while(iter.next()) |item| {
-			calc+=@intCast(u64,item);
-		}
-	}
-
-	try std.testing.expectEqual(calc,(101+100+901)*1000);
-	try std.testing.expectEqual(std_bitset.cardinality,3);
-	try std.testing.expectEqual(second_bitset.cardinality,4);
+	try std.testing.expectEqual(count,499995000000);
 }

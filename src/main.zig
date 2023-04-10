@@ -24,6 +24,12 @@ pub fn inner_initial_solver(comptime T: type, filename: []const u8, short_name: 
 	defer loaded_graph.deinit();
 
 	try loaded_graph.findAllConnectedComponents();
+	const tww = try loaded_graph.solveGreedy();
+
+	//TODO: Check these instances again
+	//REALLY SLOW: heuristic_122.gr
+	//SLOW: heuristic_052.gr
+	//BAD: heuristic_116.gr
 
 	//_ = loaded_graph.splitIntoConnectedComponents() catch |err| {
 	//	std.debug.print("Could not split graph: {}", .{err});
@@ -33,15 +39,15 @@ pub fn inner_initial_solver(comptime T: type, filename: []const u8, short_name: 
 	//const tww = try loaded_graph.connected_components.items[loaded_graph.connected_components.items.len-1].solveGreedy(&loaded_graph);
 
 	//var tww: u32 = 0;
-	//var i:u32 = loaded_graph.number_of_nodes-1;
+	//var i:T = @intCast(T,loaded_graph.number_of_nodes)-1;
 	//while(i > 0) {
-	//	tww = std.math.max(try loaded_graph.addContraction(i-1,loaded_graph.number_of_nodes-1),tww);
+	//	tww = std.math.max(try loaded_graph.addContraction(i-1,@intCast(T,loaded_graph.number_of_nodes)-1),tww);
 	//	i-=1;
 	//}
 
 	var now = try std.time.Instant.now();
 	var elapsed = now.since(timer)/(1000*1000);
-	std.debug.print("{s:<25} | {:>8}MB | {:>8} | {:>8} | {:>8} | {:>6}ms\n",.{short_name,fixed.end_index/(1024*1024),loaded_graph.number_of_nodes,loaded_graph.number_of_edges,100,elapsed});
+	std.debug.print("{s:<25} | {:>8}MB | {:>8} | {:>8} | {:>8} | {:>6}ms\n",.{short_name,fixed.end_index/(1024*1024),loaded_graph.number_of_nodes,loaded_graph.number_of_edges,tww,elapsed});
 
 }
 
@@ -58,6 +64,19 @@ pub fn initial_solver(filename: []const u8, short_name: []const u8, fixed: *std.
 	}
 }
 
+pub fn lessThanU8(context: void, lhs: []u8, rhs: []u8) bool {
+	_ = context;
+	for(0..lhs.len) |i| {
+		if(lhs[i] < rhs[i]) {
+			return true;
+		}
+		else if(lhs[i] > rhs[i]) {
+			return false;
+		}
+	}
+	return false;
+}
+
 pub fn main() !void {
 		var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 		defer _ = gpa.deinit();
@@ -68,18 +87,32 @@ pub fn main() !void {
 		var dirIter = try std.fs.cwd().openIterableDir("instances/heuristic-public",.{});
 		defer dirIter.close();
 		var dirit = dirIter.iterate();
+		
 
-		var hpa_alloc_buffer = try allocator.alloc(u8,1400*1024*1024);
+		var hpa_alloc_buffer = try allocator.alloc(u8,3000*1024*1024);
 		defer allocator.free(hpa_alloc_buffer);
 		var fixed_alloc = std.heap.FixedBufferAllocator.init(hpa_alloc_buffer);
+		//try initial_solver("instances/heuristic-public/heuristic_122.gr","heuristic_122.gr",&fixed_alloc);
 
+		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);
 		while(try dirit.next()) |item| {
 			if(item.kind == .File) {
-					const completeName = try std.fmt.allocPrint(allocator,"instances/heuristic-public/{s}",.{item.name});
-					defer allocator.free(completeName);
-
-					try initial_solver(completeName,item.name,&fixed_alloc);
-					fixed_alloc.reset();
+					try file_list.append(allocator, try std.fmt.allocPrint(allocator,"{s}",.{item.name}));
 			}
 		}
+
+		std.sort.sort([]u8, file_list.items, {}, lessThanU8);
+
+		for(file_list.items) |name| {
+			var complete_name = try std.fmt.allocPrint(allocator,"instances/heuristic-public/{s}",.{name});
+			defer allocator.free(complete_name);
+
+			try initial_solver(complete_name,name,&fixed_alloc);
+			fixed_alloc.reset();
+		}
+
+		for(file_list.items) |name| {
+			allocator.free(name);
+		}
+		file_list.deinit(allocator);
 }

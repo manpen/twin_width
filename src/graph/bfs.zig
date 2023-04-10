@@ -166,7 +166,7 @@ test "BFS: Find specific level" {
     try graph.addEdge(6, 7);
 
     var visited = try bitset.FastBitSet.initEmpty(10, gpa.allocator());
-    defer visited.deinit();
+    defer visited.deinit(gpa.allocator());
     var stack = try BfsQueue(u8).init(gpa.allocator(), 10);
     defer stack.deinit(gpa.allocator());
 

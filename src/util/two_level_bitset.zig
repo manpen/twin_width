@@ -60,7 +60,6 @@ pub const FastBitSet = struct {
 		const Self = @This();
 		storage: []u64,
 		storage_higher: []u64,
-		allocator: std.mem.Allocator,
 		cardinality: u32,
 		total_len: u32,
 
@@ -75,7 +74,6 @@ pub const FastBitSet = struct {
 			std.mem.set(u64,storage_higher,0);
 
 			return Self {
-				.allocator = allocator,
 				.storage = storage,
 				.storage_higher = storage_higher,
 				.cardinality = 0,
@@ -102,12 +100,12 @@ pub const FastBitSet = struct {
 			};
 		}
 
-		pub fn deinit(self: *Self) void {
-			self.allocator.free(self.storage);
-			self.allocator.free(self.storage_higher);
+		pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+			allocator.free(self.storage);
+			allocator.free(self.storage_higher);
 		}
 
-		pub inline fn iter(self: *Self) FastBitSetIterator {
+		pub inline fn iter(self: *const Self) FastBitSetIterator {
 			return FastBitSetIterator {
 				.coerced_ptr = self.storage.ptr,
 				.coerced_higher_ptr = self.storage_higher.ptr,
@@ -213,7 +211,7 @@ test "Check TwoLevelBitset iterator" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 	defer std.debug.assert(!gpa.deinit());
 	var std_bitset = try FastBitSet.initEmpty(50_000,gpa.allocator());
-	defer std_bitset.deinit();
+	defer std_bitset.deinit(gpa.allocator());
 
 	var random_gen = std.rand.DefaultPrng.init(@intCast(u64,std.time.timestamp()));
 

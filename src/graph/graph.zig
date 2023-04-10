@@ -28,8 +28,8 @@ pub fn Graph(comptime T: type) type {
 		@compileError("T must either be u8,u16 or u32!");
 	};
 
-	const promote_thresh = comptime if(T == u8) 0 else if(T==u16) 200 else 200;
-	const degrade_tresh = comptime if(T == u8) 0 else if(T==u16) 100 else 100;
+	const promote_thresh = comptime if(T == u8) 0 else if(T==u16) 200 else 300;
+	const degrade_tresh = comptime if(T == u8) 0 else if(T==u16) 100 else 200;
 
 	const NodeType = Node(T,promote_thresh,degrade_tresh);
 
@@ -86,52 +86,70 @@ pub fn Graph(comptime T: type) type {
 
 	pub const InducedTwinWidth = struct {
 		tww: T,
-		erased_red_edges: T
+		delta_red_edges: i32
 	};
 
 	pub fn calculateInducedTww(self: *Self, erased: T, survivor: T, upper_bound: ?T) InducedTwinWidth {
+
+		const erased_cardinality_red = self.node_list[erased].red_edges.cardinality();
+		const survivor_cardinality_red = self.node_list[survivor].red_edges.cardinality();
 		if(upper_bound) |ub| {
-			const black_edge_cardinality_erased = self.node_list[erased].black_edges.cardinality();
-			const black_edge_cardinality_survivor = self.node_list[survivor].black_edges.cardinality();
+			const erased_cardinality_black = self.node_list[erased].black_edges.cardinality();
+			const survivor_cardinality_black = self.node_list[survivor].black_edges.cardinality();
+
+			const erased_cardinality= erased_cardinality_black+erased_cardinality_red;
+			const survivor_cardinality = survivor_cardinality_black+survivor_cardinality_red;
 
 			//heuristic_024.gr
+			const min_dist_black = std.math.max(erased_cardinality_black,survivor_cardinality_black) - std.math.min(erased_cardinality_black,survivor_cardinality_black);
 
-			var black_distance:T = 0;
-			if(black_edge_cardinality_erased > black_edge_cardinality_survivor) {
-				black_distance = black_edge_cardinality_erased - black_edge_cardinality_survivor;
+			if(min_dist_black > ub) {
+				return InducedTwinWidth {
+					.tww = min_dist_black,
+					.delta_red_edges = std.math.maxInt(i32),
+				};
 			}
-			else {
-				black_distance = black_edge_cardinality_survivor - black_edge_cardinality_erased;
-			}
-			const min_red_dist = std.math.min(self.node_list[erased].red_edges.cardinality(),self.node_list[survivor].red_edges.cardinality());
 
+			const min_dist_total = std.math.max(erased_cardinality,survivor_cardinality)-std.math.min(erased_cardinality,survivor_cardinality);
 
 			// Fast exit
-			if(black_distance+min_red_dist >= ub) {
+			if(min_dist_total > ub) {
 				return InducedTwinWidth {
-					.tww = black_distance+min_red_dist,
-					.erased_red_edges = 0
+					.tww = min_dist_total,
+					.delta_red_edges = std.math.maxInt(i32)
 				};
 			}
 		}
 
+		const upper_bound_all = upper_bound orelse std.math.maxInt(T);
 
-
-		var red_iter = self.node_list[erased].red_edges.xorIterator(&self.node_list[survivor].red_edges);
 		var delta_red:T = 0;
 		var correction_factor:T = 0;
+		if(erased_cardinality_red == 0 or survivor_cardinality_red == 0) {
+			delta_red = std.math.max(erased_cardinality_red,survivor_cardinality_red);
+		}
+		else {
+			var red_iter = self.node_list[erased].red_edges.xorIterator(&self.node_list[survivor].red_edges);
 
-		while(red_iter.next()) |item| {
-			if(item != survivor and item != erased) {
-				delta_red+=1;
-			}
-			else {
-				correction_factor=1;	
+			while(red_iter.next()) |item| {
+				if(item != survivor and item != erased) {
+					delta_red+=1;
+				}
+				else {
+					correction_factor=1;	
+				}
 			}
 		}
 		
 		// TODO: Maybe factor in newly created red edges!
-		const reduced_red_edges = (self.node_list[erased].red_edges.cardinality()+self.node_list[survivor].red_edges.cardinality())-(delta_red+correction_factor);
+		var delta_red_edges = @intCast(i32,(delta_red+correction_factor)) - @intCast(i32,erased_cardinality_red+survivor_cardinality_red);
+
+		if(delta_red > upper_bound_all) {
+			return InducedTwinWidth {
+				.tww = delta_red,
+				.delta_red_edges = delta_red_edges 
+			};
+		}
 
 
 		var tww: T = 0;
@@ -145,20 +163,29 @@ pub fn Graph(comptime T: type) type {
 			if(black_iter.first) {
 				if(!self.node_list[survivor].red_edges.contains(item)) {
 					delta_red+=1;
+					delta_red_edges+=1;
 					tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
 				}
 			}
 			// Came from survivor
 			else {
 				delta_red+=1;
+				delta_red_edges+=1;
 				tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+			}
+
+			if(tww > upper_bound_all or delta_red > upper_bound_all) {
+				return InducedTwinWidth {
+					.tww = std.math.max(tww,delta_red),
+					.delta_red_edges = delta_red_edges 
+				};
 			}
 		}
 
 		tww = std.math.max(tww,delta_red);
 		return InducedTwinWidth {
 			.tww = tww,
-			.erased_red_edges = reduced_red_edges
+			.delta_red_edges = delta_red_edges 
 		};
 	}
 
@@ -221,15 +248,15 @@ pub fn Graph(comptime T: type) type {
 
 	pub fn solveGreedy(self: *Self) !T {
 		var largest_cc = self.connected_components_min_heap.remove();
-		return try self.connected_components.items[largest_cc.index].solveGreedy(self);
+		return try self.connected_components.items[largest_cc.index].solveGreedyTopK(self);
 	}
 
 	pub fn new(number_of_nodes: T, allocator: std.mem.Allocator) !Self {
 		var node_list = try allocator.alloc(NodeType,number_of_nodes);
 		
 		for(node_list) |*node| {
-			node.black_edges = try compressed_bitset.FastCompressedBitmap(T,promote_thresh,degrade_tresh).init(number_of_nodes);
-			node.red_edges = try compressed_bitset.FastCompressedBitmap(T,promote_thresh,degrade_tresh).init(number_of_nodes);
+			node.black_edges = compressed_bitset.FastCompressedBitmap(T,promote_thresh,degrade_tresh).init(number_of_nodes);
+			node.red_edges = compressed_bitset.FastCompressedBitmap(T,promote_thresh,degrade_tresh).init(number_of_nodes);
 		}
 
 		//TODO: Add some errdefer's here

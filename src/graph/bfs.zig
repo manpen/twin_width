@@ -2,6 +2,7 @@ const std = @import("std");
 const bitset = @import("../util/two_level_bitset.zig");
 const graph_mode = @import("graph.zig");
 const comptime_util = @import("../util/comptime_checks.zig");
+const topk = @import("../util/top_k_scorer.zig");
 const Graph = graph_mode.Graph;
 const CompactField = graph_mode.CompactField;
 
@@ -152,6 +153,53 @@ pub inline fn bfs(comptime T: type, start_node: T, graph: *const Graph(T), visit
         .iter_current = stack.iterator(),
         .level = 0,
     };
+}
+
+pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, stack: *BfsQueue(T), scorer: *topk.TopKScorer(T,K), comptime options: BfsOptions) void {
+    stack.clear();
+    stack.addNext(start_node);
+    stack.swapFrontiers();
+
+    visited.set(start_node);
+
+		var iter_current = stack.iterator();
+		var current_level:u32 = 0;
+
+		while (current_level < options.max_level) {
+			while (iter_current.next()) |id| {
+				if (options.kind == .black or options.kind == .both) {
+					var black_iter = graph.node_list[id].black_edges.iterator();
+					while (black_iter.next()) |item| {
+						const total_deg = graph.node_list[item].black_edges.cardinality()+graph.node_list[item].red_edges.cardinality();
+						if (!visited.setExists(item)) {
+							stack.addNext(@intCast(T, item));
+						}
+						scorer.addVisit(item,total_deg);
+					}
+				}
+				if (options.kind == .red or options.kind == .both) {
+					var red_iter = graph.node_list[id].red_edges.iterator();
+					while (red_iter.next()) |item| {
+						const total_deg = graph.node_list[item].black_edges.cardinality()+graph.node_list[item].red_edges.cardinality();
+						if (!visited.setExists(item)) {
+							stack.addNext(@intCast(T, item));
+						}
+						scorer.addVisit(item,total_deg);
+					}
+				}
+			}
+
+			current_level+=1;
+			if (stack.nextFrontierSize() == 0) {
+				return;
+			}
+			stack.swapFrontiers();
+			iter_current = stack.iterator();
+		}
+		while (iter_current.next()) |id| {
+			const total_deg = graph.node_list[id].black_edges.cardinality()+graph.node_list[id].red_edges.cardinality();
+			scorer.addVisit(id,total_deg);
+		}
 }
 
 test "BFS: Find specific level" {

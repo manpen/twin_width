@@ -10,6 +10,7 @@ comptime { _ = @import("tww/contraction_sequence.zig"); }
 comptime { _ = @import("tww/retraceable_contraction_sequence.zig"); }
 comptime { _ = @import("pace_2023/pace_fmt.zig"); }
 comptime { _ = @import("graph/bfs.zig"); }
+comptime { _ = @import("util/top_k_scorer.zig"); }
 const builtin = @import("builtin");
 
 
@@ -27,7 +28,7 @@ pub fn inner_initial_solver(comptime T: type, filename: []const u8, short_name: 
 	const tww = try loaded_graph.solveGreedy();
 
 	//TODO: Check these instances again
-	//REALLY SLOW: heuristic_122.gr
+	//REALLY SLOW: heuristic_122.gr better but still ~550 sec heuristic_136.gr slow too.
 	//SLOW: heuristic_052.gr
 	//BAD: heuristic_116.gr
 
@@ -89,10 +90,13 @@ pub fn main() !void {
 		var dirit = dirIter.iterate();
 		
 
+		// Need star reducer, path reducer and some other things
+		// star idea reduce anything except star!
 		var hpa_alloc_buffer = try allocator.alloc(u8,3000*1024*1024);
 		defer allocator.free(hpa_alloc_buffer);
 		var fixed_alloc = std.heap.FixedBufferAllocator.init(hpa_alloc_buffer);
-		//try initial_solver("instances/heuristic-public/heuristic_122.gr","heuristic_122.gr",&fixed_alloc);
+		try initial_solver("instances/heuristic-public/heuristic_122.gr","heuristic_122.gr",&fixed_alloc);
+		//try initial_solver("instances/heuristic-public/heuristic_176.gr","heuristic_176.gr",&fixed_alloc);
 
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);
 		while(try dirit.next()) |item| {

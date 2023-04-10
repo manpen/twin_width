@@ -95,6 +95,7 @@ pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, c
 				while(iter.next()) |item| {
 					bitset.set(item);
 				}
+				list.deinit(allocator);
 				const container = Self {
 						.storage = StorageRepresentation {.bitset = bitset},
 						.max_size = max_size
@@ -266,7 +267,7 @@ test "CompressedBitmap: Check get" {
 
 
 
-	var empty = FastCompressedBitmap(u16,4,6).init(2000);
+	var empty = FastCompressedBitmap(u16,200,100).init(2000);
 	defer empty.deinit(gpa.allocator());	
 
 	var i:u16 = 0;
@@ -280,7 +281,7 @@ test "CompressedBitmap: Check set" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 	defer std.debug.assert(!gpa.deinit());
 
-	var empty = FastCompressedBitmap(u16,4,6).init(2000);
+	var empty = FastCompressedBitmap(u16,200,100).init(2000);
 	defer empty.deinit(gpa.allocator());	
 
 	var i:u16 = 0;
@@ -301,7 +302,7 @@ test "CompressedBitmap: Check large" {
 	gpa.requested_memory_limit = 4000;
 	defer std.debug.assert(!gpa.deinit());
 
-	var empty = FastCompressedBitmap(u32,9,11).init(3_000_000);
+	var empty = FastCompressedBitmap(u32,200,100).init(3_000_000);
 	defer empty.deinit(gpa.allocator());	
 
 	var i:u16 = 0;
@@ -333,7 +334,7 @@ test "CompressedBitmap: Check large iterator" {
 	gpa.requested_memory_limit = 4000;
 	defer std.debug.assert(!gpa.deinit());
 
-	var empty = FastCompressedBitmap(u32,9,11).init(3_000_000);
+	var empty = FastCompressedBitmap(u32,200,100).init(3_000_000);
 	defer empty.deinit(gpa.allocator());	
 
 	var i:u16 = 0;
@@ -360,7 +361,7 @@ test "bench: CompressedBitmap: Check large iterator" {
 	}){};
 	defer std.debug.assert(!gpa.deinit());
 
-	var empty = FastCompressedBitmap(u32,10,12).init(10_000_000);
+	var empty = FastCompressedBitmap(u32,200,100).init(10_000_000);
 	defer empty.deinit(gpa.allocator());	
 
 	var i:u32 = 0;
@@ -382,7 +383,7 @@ test "bench: CompressedBitmap: Check large iterator inline" {
 	}){};
 	defer std.debug.assert(!gpa.deinit());
 
-	var empty = FastCompressedBitmap(u32,10,12).init(10_000_000);
+	var empty = FastCompressedBitmap(u32,200,100).init(10_000_000);
 	defer empty.deinit(gpa.allocator());	
 
 	var i:u32 = 0;

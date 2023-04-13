@@ -155,22 +155,111 @@ pub inline fn bfs(comptime T: type, start_node: T, graph: *const Graph(T), visit
     };
 }
 
+
 pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, stack: *BfsQueue(T), scorer: *topk.TopKScorer(T,K), comptime options: BfsOptions) void {
     stack.clear();
     stack.addNext(start_node);
     stack.swapFrontiers();
 
     visited.set(start_node);
+		scorer.setNextTargetDegree(graph.node_list[start_node].cardinality());
 
 		var iter_current = stack.iterator();
 		var current_level:u32 = 0;
 
 		while (current_level < options.max_level) {
 			while (iter_current.next()) |id| {
+				if (graph.node_list[id].isLargeNode()) {
+					var iter_large = graph.node_list[id].takeIterator(130);
+					while (iter_large.next()) |item| {
+						const total_deg = graph.node_list[item].cardinality();
+						if (!visited.setExists(item)) {
+							stack.addNext(@intCast(T, item));
+						}
+						scorer.addVisit(item,total_deg);
+					}
+				}
+				else {
+					if (options.kind == .black or options.kind == .both) {
+						var black_iter = graph.node_list[id].black_edges.iterator();
+						while (black_iter.next()) |item| {
+							const total_deg = graph.node_list[item].cardinality();
+							if (!visited.setExists(item)) {
+								stack.addNext(@intCast(T, item));
+							}
+							scorer.addVisit(item,total_deg);
+						}
+					}
+					if (options.kind == .red or options.kind == .both) {
+						var red_iter = graph.node_list[id].red_edges.iterator();
+						while (red_iter.next()) |item| {
+							const total_deg = graph.node_list[item].cardinality();
+							if (!visited.setExists(item)) {
+								stack.addNext(@intCast(T, item));
+							}
+							scorer.addVisit(item,total_deg);
+						}
+					}
+				}
+			}
+
+			current_level+=1;
+			if (stack.nextFrontierSize() == 0) {
+				return;
+			}
+			stack.swapFrontiers();
+			iter_current = stack.iterator();
+		}
+		while (iter_current.next()) |id| {
+			const total_deg = graph.node_list[id].black_edges.cardinality()+graph.node_list[id].red_edges.cardinality();
+			scorer.addVisit(id,total_deg);
+		}
+}
+
+pub inline fn bfs_topk_incremental(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), scorer: *topk.TopKScorer(T,K), new_level_one_nodes: *std.ArrayListUnmanaged(T), level_one_merge: bool,  comptime options: BfsOptions) void {
+    _ = start_node;
+		for(new_level_one_nodes.items) |level_one_node| {
+			if(level_one_merge) {
+				scorer.addVisit(level_one_node,graph.node_list[level_one_node].cardinality());
+			}
+			if (options.kind == .black or options.kind == .both) {
+					var black_iter = graph.node_list[level_one_node].black_edges.iterator();
+					while (black_iter.next()) |item| {
+						const total_deg = graph.node_list[item].cardinality();
+						scorer.addVisit(item,total_deg);
+					}
+				}
+				if (options.kind == .red or options.kind == .both) {
+					var red_iter = graph.node_list[level_one_node].red_edges.iterator();
+					while (red_iter.next()) |item| {
+						const total_deg = graph.node_list[item].cardinality();
+						scorer.addVisit(item,total_deg);
+					}
+				}
+		}
+}
+
+
+pub inline fn bfs_topk_ignore_large(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, stack: *BfsQueue(T), scorer: *topk.TopKScorer(T,K), large_threshold: T, comptime options: BfsOptions) void {
+    stack.clear();
+    stack.addNext(start_node);
+    stack.swapFrontiers();
+
+    visited.set(start_node);
+		scorer.setNextTargetDegree(graph.node_list[start_node].cardinality());
+
+		var iter_current = stack.iterator();
+		var current_level:u32 = 0;
+
+		while (current_level < options.max_level) {
+			while (iter_current.next()) |id| {
+				if(current_level==1 and graph.node_list[id].cardinality() > large_threshold) {
+					continue;
+				}
 				if (options.kind == .black or options.kind == .both) {
 					var black_iter = graph.node_list[id].black_edges.iterator();
 					while (black_iter.next()) |item| {
-						const total_deg = graph.node_list[item].black_edges.cardinality()+graph.node_list[item].red_edges.cardinality();
+						const total_deg = graph.node_list[item].cardinality();
 						if (!visited.setExists(item)) {
 							stack.addNext(@intCast(T, item));
 						}
@@ -180,7 +269,7 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
 				if (options.kind == .red or options.kind == .both) {
 					var red_iter = graph.node_list[id].red_edges.iterator();
 					while (red_iter.next()) |item| {
-						const total_deg = graph.node_list[item].black_edges.cardinality()+graph.node_list[item].red_edges.cardinality();
+						const total_deg = graph.node_list[item].cardinality();
 						if (!visited.setExists(item)) {
 							stack.addNext(@intCast(T, item));
 						}

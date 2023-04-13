@@ -72,7 +72,7 @@ pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, c
 			}
 		}
 
-		pub inline fn cardinality(self: *StorageRepresentation) T {
+		pub inline fn cardinality(self: *const StorageRepresentation) T {
 			switch(self.*) {
 				.bitset => return @intCast(T,self.bitset.cardinality),
 					.array => return @intCast(T,self.array.cardinality()),
@@ -239,7 +239,7 @@ pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, c
 			return self.storage.contains(item);
 		}
 
-		pub inline fn cardinality(self: *Self) T {
+		pub inline fn cardinality(self: *const Self) T {
 			return self.storage.cardinality();
 		}
 

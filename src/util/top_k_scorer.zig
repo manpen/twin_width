@@ -10,7 +10,12 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 		const Self = @This();
 		pub const TopKScorerEntry  = packed struct {
 			unique_timestamp_of_iteration: u32,
-			score: T
+			score: i32
+		};
+
+		pub const TopKBfsIncreasor  = packed struct {
+			unique_timestamp_of_iteration: u32,
+			degree_added: u64,
 		};
 
 		pub const TopKScorerContext = struct {
@@ -29,11 +34,20 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 		in_prio: std.bit_set.DynamicBitSetUnmanaged,
 		add_visit_calls: u32,
 
+		largest_bfs_increasor: []TopKBfsIncreasor,
+		bfs_unique_id: u32,
+		largest_bfs_node_id: T,
+
 		pub fn init(allocator: std.mem.Allocator, total_number_of_nodes: T) !Self {
 			var memory = try allocator.alloc(TopKScorerEntry, total_number_of_nodes);
 			for(0..total_number_of_nodes) |i| {
 				memory[i].unique_timestamp_of_iteration = 0;
 			}
+			var bfsinc = try allocator.alloc(TopKBfsIncreasor, total_number_of_nodes);
+			for(0..total_number_of_nodes) |i| {
+				bfsinc[i].unique_timestamp_of_iteration = 0;
+			}
+			bfsinc[0].degree_added = 0;
 			var top_k_entry = try allocator.create(TopKScorerContext);
 			top_k_entry.memory = memory;
 			top_k_entry.target_degree = 0;
@@ -44,7 +58,10 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 
 			return Self {
 				.backing_storage = memory,
+				.largest_bfs_increasor = bfsinc,
 				.unique_id = 1,
+				.bfs_unique_id = 1,
+				.largest_bfs_node_id = 0,
 				.priority_queue = priority_queue,
 				.top_k_context = top_k_entry,
 				.in_prio = try std.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator,total_number_of_nodes),
@@ -53,8 +70,10 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 		}
 
 		pub inline fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+			self.in_prio.deinit(allocator);
 			self.priority_queue.deinit();
 			allocator.destroy(self.top_k_context);
+			allocator.free(self.largest_bfs_increasor);
 			allocator.free(self.backing_storage);
 		}
 
@@ -90,12 +109,32 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 			};
 		}
 
+		pub inline fn consumeLargestBfsIncreasor(self: *Self) T {
+			self.bfs_unique_id += 1;
+			self.largest_bfs_increasor[self.largest_bfs_node_id].degree_added = 0;
+			return self.largest_bfs_node_id;
+		}
+
+		pub inline fn addBfsIncreasor(self: *Self, visited: T, total_degree: T) void {
+			if(self.largest_bfs_increasor[visited].unique_timestamp_of_iteration != self.bfs_unique_id) {
+				self.largest_bfs_increasor[visited].unique_timestamp_of_iteration = self.bfs_unique_id;
+				self.largest_bfs_increasor[visited].degree_added = total_degree;
+			}
+			else {
+				self.largest_bfs_increasor[visited].degree_added += total_degree;
+			}
+
+			if(self.largest_bfs_increasor[visited].degree_added > self.largest_bfs_increasor[self.largest_bfs_node_id].degree_added) {
+				self.largest_bfs_node_id = visited;
+			}
+		}
+
 		pub inline fn addVisit(self: *Self, visited: T, total_degree: T) void {
 			self.add_visit_calls+=1;
 			if(self.backing_storage[visited].unique_timestamp_of_iteration != self.unique_id) {
 				self.backing_storage[visited].unique_timestamp_of_iteration = self.unique_id;
-				const new_score = (self.top_k_context.target_degree-1)+(total_degree-1);
-				self.backing_storage[visited].score = new_score;
+				//const new_score = (self.top_k_context.target_degree-1)+(total_degree-1);
+				self.backing_storage[visited].score = @intCast(i32,total_degree)-2;
 			}
 			else {
 				self.backing_storage[visited].score-=2;

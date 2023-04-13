@@ -101,8 +101,8 @@ pub const FastBitSet = struct {
 		}
 
 		pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-			allocator.free(self.storage);
 			allocator.free(self.storage_higher);
+			allocator.free(self.storage);
 		}
 
 		pub inline fn iter(self: *const Self) FastBitSetIterator {
@@ -169,7 +169,7 @@ pub const FastBitSet = struct {
 			return false;
 		}
 
-		pub inline fn get(self: *Self, index: u32) bool {
+		pub inline fn get(self: *const Self, index: u32) bool {
 			const overflow:u6 = @intCast(u6,index&0x3F);
 			const new_index = index>>6;
 			return (self.storage[new_index] & @as(u64,1)<<overflow)!=0;

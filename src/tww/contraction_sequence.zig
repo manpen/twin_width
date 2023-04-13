@@ -3,7 +3,8 @@ const comptime_util = @import("../util/comptime_checks.zig");
 
 pub const ContractionError = error {
 	ContractionOverflow,
-	NoContractionLeft
+	NoContractionLeft,
+	Incomplete
 };
 
 pub fn Contraction(comptime T: type) type {
@@ -104,6 +105,32 @@ pub fn ContractionSequence(comptime T: type) type {
 		}
 		self.write_ptr-=1;
 		return self.list[self.write_ptr];
+	}
+
+	pub inline fn writeSolution(self: *Self, filename: []const u8) !void {
+		var file = try std.fs.cwd().createFile(filename, .{});
+		defer file.close();
+		var writer = file.writer();
+
+		var iterate_seq = self.iterator();
+		while(iterate_seq.next()) |seq| {
+			try std.fmt.format(writer,"{d} {d}\n",.{seq.survivor+1,seq.erased+1});
+		}
+	}
+	
+	pub inline fn writeSolutionToStdout(self: *Self) !void {
+		var file = std.io.getStdOut();
+		var buffered = std.io.BufferedWriter(16384,@TypeOf(file.writer())){
+			.unbuffered_writer = file.writer()
+		};
+		var writer = buffered.writer();
+
+
+		var iterate_seq = self.iterator();
+		while(iterate_seq.next()) |seq| {
+			try std.fmt.format(writer,"{d} {d}\n",.{seq.survivor+1,seq.erased+1});
+		}
+		try buffered.flush();
 	}
 };
 }

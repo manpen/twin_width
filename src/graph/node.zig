@@ -31,8 +31,8 @@ pub fn LargeNodeQueryProcessor(comptime T: type) type {
 		}
 
 		pub fn init(graph: *const Graph(T)) !Self {
-			var bt = std.PriorityQueue(NodeDegreeEntry,void,Self.compareFunction).init(graph.node_allocator, {});
-			var added_nodes = try std.bit_set.DynamicBitSetUnmanaged.initEmpty(graph.node_allocator,graph.number_of_nodes);
+			var bt = std.PriorityQueue(NodeDegreeEntry,void,Self.compareFunction).init(graph.allocator, {});
+			var added_nodes = try std.bit_set.DynamicBitSetUnmanaged.initEmpty(graph.allocator,graph.number_of_nodes);
 			try bt.ensureTotalCapacity(graph.number_of_nodes);
 			return Self {
 				.lowest_degree_nodes = bt,
@@ -102,7 +102,7 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
 
 		pub fn promoteToLargeDegreeNode(self: *Self, graph: *const Graph(T)) !void {
 			if(self.high_degree_node == null) {
-				var created = try graph.node_allocator.create(LargeNodeQueryProcessor(T));
+				var created = try graph.allocator.create(LargeNodeQueryProcessor(T));
 				created.* = try LargeNodeQueryProcessor(T).init(graph);
 				var iter = self.orderedIterator();
 				while(iter.next()) |item| {

@@ -25,7 +25,24 @@ pub fn build(b: *std.Build) void {
     });
 		exe.single_threaded = true;
 		exe.addIncludePath("src/tww");
-		exe.linkLibC();
+
+
+    const sub = b.addExecutable(.{
+        .name = "solver",
+        // In this case the main source file is merely a path, however, in more
+        // complicated build scripts, this could be a generated file.
+        .root_source_file = .{ .path = "src/submission.zig" },
+        .target = target,
+        .optimize = optimize
+    });
+		sub.single_threaded = true;
+		sub.addIncludePath("src/tww");
+		sub.install();
+
+		const run_sub = sub.run();
+		run_sub.step.dependOn(b.getInstallStep());
+    const solver_step = b.step("solver", "Compile solver for submission");
+		solver_step.dependOn(b.getInstallStep());
 
 
     // This declares intent for the executable to be installed into the

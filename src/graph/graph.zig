@@ -36,7 +36,6 @@ pub fn Graph(comptime T: type) type {
         connected_components: std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)),
         connected_components_min_heap: std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc),
         allocator: std.mem.Allocator,
-				node_allocator: std.mem.Allocator,
         contraction: RetraceableContractionSequence(T),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
@@ -176,6 +175,69 @@ pub fn Graph(comptime T: type) type {
             return InducedTwinWidth{ .tww = tww, .delta_red_edges = delta_red_edges };
         }
 
+				pub fn addContractionNewRedEdges(self: *Self, erased: T, survivor: T, new_red_edges: *std.ArrayListUnmanaged(T), first_level_merge: *bool ) !T {
+            if (self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
+                return GraphError.InvalidContractionOneNodeErased;
+            }
+						first_level_merge.* = false;
+            self.erased_nodes.set(erased);
+            var red_iter = self.node_list[erased].red_edges.iterator();
+            while (red_iter.next()) |item| {
+                if (item != survivor) {
+                    if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+												try new_red_edges.append(self.allocator,item);
+                        try self.node_list[item].addRedEdge(self.allocator, survivor);
+                    }
+                }
+								else {
+									first_level_merge.* = true;
+								}
+                try self.node_list[item].removeRedEdge(self.allocator, erased);
+            }
+
+            var tww: T = 0;
+            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+            var remove_list = std.ArrayList(T).init(self.allocator);
+            defer remove_list.deinit();
+
+            while (black_iter.next()) |item| {
+                if (item == survivor or item == erased) {
+										first_level_merge.* = true;
+                    continue;
+                }
+                // Came from erased
+                if (black_iter.first) {
+                    if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+												try new_red_edges.append(self.allocator,item);
+                        try self.node_list[item].addRedEdge(self.allocator, survivor);
+                    }
+                }
+                // Came from survivor
+                else {
+                    try self.node_list[survivor].addRedEdge(self.allocator, item);
+                    try self.node_list[item].addRedEdge(self.allocator, survivor);
+
+                    try self.node_list[item].removeBlackEdge(self.allocator, survivor);
+                    try remove_list.append(item);
+                }
+                tww = std.math.max(tww, @intCast(T, self.node_list[item].red_edges.cardinality()));
+            }
+
+            for (remove_list.items) |item| {
+                try self.node_list[survivor].removeBlackEdge(self.allocator, item);
+            }
+
+            var black_remove_iter = self.node_list[erased].black_edges.iterator();
+            while (black_remove_iter.next()) |item| {
+                try self.node_list[item].removeBlackEdge(self.allocator, erased);
+            }
+
+            tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
+            try self.contraction.addContraction(erased, survivor, std.math.max(tww, self.contraction.getTwinWidth()));
+            return tww;
+        }
+
         pub fn addContraction(self: *Self, erased: T, survivor: T) !T {
             if (self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
                 return GraphError.InvalidContractionOneNodeErased;
@@ -184,11 +246,11 @@ pub fn Graph(comptime T: type) type {
             var red_iter = self.node_list[erased].red_edges.iterator();
             while (red_iter.next()) |item| {
                 if (item != survivor) {
-                    if (!try self.node_list[survivor].addRedEdgeExists(self.node_allocator, item)) {
-                        try self.node_list[item].addRedEdge(self.node_allocator, survivor);
+                    if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+                        try self.node_list[item].addRedEdge(self.allocator, survivor);
                     }
                 }
-                try self.node_list[item].removeRedEdge(self.node_allocator, erased);
+                try self.node_list[item].removeRedEdge(self.allocator, erased);
             }
 
             var tww: T = 0;
@@ -203,28 +265,28 @@ pub fn Graph(comptime T: type) type {
                 }
                 // Came from erased
                 if (black_iter.first) {
-                    if (!try self.node_list[survivor].addRedEdgeExists(self.node_allocator, item)) {
-                        try self.node_list[item].addRedEdge(self.node_allocator, survivor);
+                    if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+                        try self.node_list[item].addRedEdge(self.allocator, survivor);
                     }
                 }
                 // Came from survivor
                 else {
-                    try self.node_list[survivor].addRedEdge(self.node_allocator, item);
-                    try self.node_list[item].addRedEdge(self.node_allocator, survivor);
+                    try self.node_list[survivor].addRedEdge(self.allocator, item);
+                    try self.node_list[item].addRedEdge(self.allocator, survivor);
 
-                    try self.node_list[item].removeBlackEdge(self.node_allocator, survivor);
+                    try self.node_list[item].removeBlackEdge(self.allocator, survivor);
                     try remove_list.append(item);
                 }
                 tww = std.math.max(tww, @intCast(T, self.node_list[item].red_edges.cardinality()));
             }
 
             for (remove_list.items) |item| {
-                try self.node_list[survivor].removeBlackEdge(self.node_allocator, item);
+                try self.node_list[survivor].removeBlackEdge(self.allocator, item);
             }
 
             var black_remove_iter = self.node_list[erased].black_edges.iterator();
             while (black_remove_iter.next()) |item| {
-                try self.node_list[item].removeBlackEdge(self.node_allocator, erased);
+                try self.node_list[item].removeBlackEdge(self.allocator, erased);
             }
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
@@ -249,7 +311,7 @@ pub fn Graph(comptime T: type) type {
 									last_node = survivor;
 								}
 							}
-							if(self.contraction.lastContraction()) |ctr| {
+							else if(self.contraction.lastContraction()) |ctr| {
 								if(last_node) |ln| {
 									_ = try self.addContraction(ctr.survivor,ln);
 								}
@@ -293,11 +355,11 @@ pub fn Graph(comptime T: type) type {
             return (2 * @intToFloat(f64, self.number_of_edges)) / (@intToFloat(f64, self.number_of_nodes) * @intToFloat(f64, self.number_of_nodes - 1));
         }
 
-        pub fn loadFromPace(allocator: std.mem.Allocator, node_allocator: std.mem.Allocator, pace: *pace_2023.Pace2023Fmt(T)) !Self {
+        pub fn loadFromPace(allocator: std.mem.Allocator, pace: *pace_2023.Pace2023Fmt(T)) !Self {
             var node_list = try allocator.alloc(NodeType, pace.number_of_nodes);
 
             for (0..pace.number_of_nodes) |index| {
-                node_list[index].black_edges = try compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).fromUnsorted(node_allocator, &pace.nodes[index].edges, @intCast(T, pace.number_of_nodes));
+                node_list[index].black_edges = try compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).fromUnsorted(allocator, &pace.nodes[index].edges, @intCast(T, pace.number_of_nodes));
                 node_list[index].red_edges = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).init(@intCast(T, pace.number_of_nodes));
 								node_list[index].high_degree_node = null;
             }
@@ -305,8 +367,8 @@ pub fn Graph(comptime T: type) type {
             // Remove allocations on failure
             errdefer {
                 for (node_list) |*node| {
-                    node.black_edges.deinit(node_allocator);
-                    node.red_edges.deinit(node_allocator);
+                    node.black_edges.deinit(allocator);
+                    node.red_edges.deinit(allocator);
 										node.high_degree_node = null;
                 }
                 allocator.free(node_list);
@@ -317,7 +379,6 @@ pub fn Graph(comptime T: type) type {
                 .number_of_edges = pace.number_of_edges, //ATM
                 .node_list = node_list,
                 .allocator = allocator,
-								.node_allocator = node_allocator,
                 .erased_nodes = try bitset.FastBitSet.initEmpty(pace.number_of_nodes, allocator),
                 .scratch_bitset = try bitset.FastBitSet.initEmpty(pace.number_of_nodes, allocator),
                 .connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){},

@@ -170,7 +170,7 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
 		while (current_level < options.max_level) {
 			while (iter_current.next()) |id| {
 				if (graph.node_list[id].isLargeNode()) {
-					var iter_large = graph.node_list[id].takeIterator(130);
+					var iter_large = graph.node_list[id].takeIterator(30);
 					while (iter_large.next()) |item| {
 						const total_deg = graph.node_list[item].cardinality();
 						if (!visited.setExists(item)) {
@@ -219,7 +219,7 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
 pub inline fn bfs_topk_incremental(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), scorer: *topk.TopKScorer(T,K), new_level_one_nodes: *std.ArrayListUnmanaged(T), level_one_merge: bool,  comptime options: BfsOptions) void {
     _ = start_node;
 		for(new_level_one_nodes.items) |level_one_node| {
-			if(level_one_merge) {
+			if(!level_one_merge) {
 				scorer.addVisit(level_one_node,graph.node_list[level_one_node].cardinality());
 			}
 			if (options.kind == .black or options.kind == .both) {

@@ -1,2 +1,12 @@
 # Introduction
-Please notice that there is some code that must be refactored and reworked before it can be used.
+
+Otherwise:
+```
+zig build run -Doptimize=ReleaseFast
+```
+should run the solver on the heuristic dataset
+
+To build for submission use:
+```
+./compile.sh
+```

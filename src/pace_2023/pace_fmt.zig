@@ -32,7 +32,7 @@ pub fn loadPaceGraphVerticesSizeFromString(string: []const u8) !u32 {
     return PaceError.NotPACEFormat;
 }
 
-pub fn loadPaceGraphVerticesSizeFromFile(filename: []const u8) !u32 {
+pub fn loadPaceProblemHeaderFromFile(filename: []const u8) !PaceProblem2023 {
     const file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
 
@@ -59,9 +59,17 @@ pub fn loadPaceGraphVerticesSizeFromFile(filename: []const u8) !u32 {
         const number_of_nodes: u32 = std.fmt.parseInt(u32, splits.next() orelse return PaceError.NotPACEFormat, 10) catch {
             return PaceError.NotPACEFormat;
         };
-        return number_of_nodes;
+
+				const number_of_edges: u32 = std.fmt.parseInt(u32, splits.next() orelse return PaceError.NotPACEFormat, 10) catch {
+					return PaceError.NotPACEFormat;
+				};
+
+		    return PaceProblem2023 {
+					.nodes = number_of_nodes,
+					.edges = number_of_edges
+				};
     }
-    return PaceError.NotPACEFormat;
+		return PaceError.NotPACEFormat;
 }
 
 pub fn loadPaceProblemHeaderFromStdin() !PaceProblem2023 {

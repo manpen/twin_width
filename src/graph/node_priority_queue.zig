@@ -47,7 +47,7 @@ pub fn NodePriorityQueue(comptime T: type) type {
 
         pub inline fn shouldPostpone(self: *Self, current_tww: T, induced_tww: T) bool {
             _ = self;
-            return induced_tww > current_tww and (induced_tww * 2) > (current_tww * 3);
+            return induced_tww > current_tww and (induced_tww * 4) > (current_tww * 5);
         }
 
         pub inline fn postpone(self: *Self, node: T, by: T) !bool {

@@ -45,7 +45,6 @@ pub fn InducedSubGraph(comptime T: type) type {
 							// Reset bitset we need it to use it as a scratch for the visited field
 							solver.scratch_bitset.unsetAll();
 
-
 							var contractions_left: u32 = self.nodes.cardinality() - 1;
 							if(contractions_left == 0) return 0;
 							var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
@@ -69,6 +68,9 @@ pub fn InducedSubGraph(comptime T: type) type {
 							if(contractions_left == 0) return @intCast(T,self.graph.getCurrentTwinWidth());
 
 							solver.bfs_stack.clear();
+
+							var best_contraction_tww_postponed:T = std.math.maxInt(T);
+							var best_contraction_postponed: contraction.Contraction(T)  = .{.erased = 0, .survivor = 0};
 
 
 							var max_consecutive_postpones:u32 = contractions_left;
@@ -98,20 +100,22 @@ pub fn InducedSubGraph(comptime T: type) type {
 								}
 								solver.scratch_bitset.unsetAll();
 								// Extremely large tww 
-								//if(total_tww < (contractions_left>>3) and induced_tww.tww > total_tww and induced_tww.tww > (contractions_left>>3)) {
-									// Optimal time to not increase twin width beyond the current tww.
-							//		if(try priority_queue.postpone(first_node,induced_tww.tww)) {
-							//				induced_tww.reset();
-							//				continue;
-						//			}
-							//	}
+
+								if(induced_tww.tww < best_contraction_tww_postponed) {
+									best_contraction_tww_postponed = induced_tww.tww;
+									best_contraction_postponed = min_contraction;
+								}
 
 								if(current_postpones < max_consecutive_postpones and solver.priority_queue.shouldPostpone(total_tww,induced_tww.tww) and try solver.priority_queue.postpone(first_node,induced_tww.tww)) {
 									induced_tww.reset();
 									current_postpones+=1;
 									continue;
 								}
+								else if(current_postpones >= max_consecutive_postpones and induced_tww.tww > best_contraction_tww_postponed) {
+									min_contraction = best_contraction_postponed;	
+								}
 								current_postpones = 0;
+								best_contraction_tww_postponed = std.math.maxInt(T);
 
 								contractions_left -= 1;
 								max_consecutive_postpones = contractions_left+1;
@@ -121,8 +125,9 @@ pub fn InducedSubGraph(comptime T: type) type {
 								total_tww = std.math.max(last_evoked_twin_width,total_tww);
 								solver.priority_queue.increaseTick();
 
+
 								try solver.priority_queue.add(first_node);
-								if (contractions_left % 100000 == 0) {
+								if (contractions_left % 70000 == 0) {
 									var node_promoter_iterator = self.nodes.iterator();
 									while(node_promoter_iterator.next()) |item| {
 										if(self.graph.erased_nodes.get(item)) continue;
@@ -133,40 +138,39 @@ pub fn InducedSubGraph(comptime T: type) type {
 									}
 								}
 
-								//if (contractions_left % 2000 == 0) {
-								//	var bfs_max = scorer.consumeLargestBfsIncreasor();
-							//		std.debug.print("Largest bfs increasor {} is postponed? {}\n",.{bfs_max,priority_queue.postpone_set.isSet(bfs_max)});
-									//if(!priority_queue.postpone_set.isSet(bfs_max)) {
-									//	var tww = try self.calculateMinimalInducedTww(K,&scorer,bfs_max);
-									//	solver.scratch_bitset.unsetAll();
-									//	if(total_tww >= tww.tww) {
-									//		// Node seems to be egligable
-									//		std.debug.print("Does not increase TWW do contraction!\n",.{});
-									//		contractions_left -= 1;
-									//		induced_tww.reset();
-
-//											total_tww = std.math.max(try self.graph.addContraction(tww.target,bfs_max), total_tww);
-	//										priority_queue.increaseTick();
-		//								}
-			//						}
-							//	}
-
 								if (total_tww >= contractions_left) {
 									//std.debug.print("Early stopping due to high twin width!\n", .{});
 									var first_left_node:?T = null;
 									while(contractions_left > 0) {
 										if(first_left_node) |f_node| {
 											const sur = try solver.priority_queue.removeNext(std.math.maxInt(T));
+											if(self.graph.erased_nodes.get(sur)) continue;
 											_ = try self.graph.addContraction(sur,f_node);
 											contractions_left-=1;
 										}
 										else {
 											first_left_node = try solver.priority_queue.removeNext(std.math.maxInt(T));
+											if(self.graph.erased_nodes.get(first_left_node.?)) {
+												first_left_node = null;	
+											}
 										}
 									}
 									return total_tww;
 								}
 							}
+
+							var local_arr = try std.BoundedArray(T,251).init(0);
+							var iter_first = solver.priority_queue.priority_queue.iterator();
+							while(iter_first.next()) |first| {
+								if(self.graph.erased_nodes.get(first.id)) continue;
+								try local_arr.append(first.id);
+							}
+							var iter_second = solver.priority_queue.postponedIterator();
+							while(iter_second.next()) |first| {
+								if(self.graph.erased_nodes.get(first.node)) continue;
+								try local_arr.append(first.node);
+							}
+
 							return total_tww;
         }
 

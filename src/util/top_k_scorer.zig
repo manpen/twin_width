@@ -23,14 +23,20 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 			memory: []TopKScorerEntry,
 		};
 
-		pub fn entryCompareFn(context: *TopKScorerContext, lhs: T,rhs: T) std.math.Order {
-			return std.math.order(context.memory[rhs].score,context.memory[lhs].score);
+		pub const TopKQueueEntry = struct {
+			node: T,
+			score: i32
+		};
+
+		pub fn entryCompareFn(context: *TopKScorerContext, lhs: TopKQueueEntry,rhs: TopKQueueEntry) std.math.Order {
+			_ = context;
+			return std.math.order(rhs.score,lhs.score);
 		}
 
 		backing_storage: []TopKScorerEntry,
 		unique_id: u32,
 		top_k_context: *TopKScorerContext,
-		priority_queue: std.PriorityQueue(T,*TopKScorerContext, entryCompareFn),
+		priority_queue: std.PriorityQueue(TopKQueueEntry,*TopKScorerContext, entryCompareFn),
 		in_prio: std.bit_set.DynamicBitSetUnmanaged,
 		add_visit_calls: u32,
 
@@ -52,7 +58,7 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 			top_k_entry.memory = memory;
 			top_k_entry.target_degree = 0;
 
-			var priority_queue = std.PriorityQueue(T,*TopKScorerContext, entryCompareFn).init(allocator,top_k_entry);
+			var priority_queue = std.PriorityQueue(TopKQueueEntry,*TopKScorerContext, entryCompareFn).init(allocator,top_k_entry);
 
 			try priority_queue.ensureTotalCapacity(K);
 
@@ -83,7 +89,7 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 
 			// Clear the queue
 			while(self.priority_queue.removeOrNull()) |item| {
-				self.in_prio.unset(item);
+				self.in_prio.unset(item.node);
 			}
 		}
 
@@ -93,11 +99,10 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 		}
 
 		pub const TopKScorerIterator = struct {
-			scorer: *Self,
+			iterator: std.PriorityQueue(TopKQueueEntry,*TopKScorerContext, entryCompareFn).Iterator,
 			pub inline fn next(self: *TopKScorerIterator) ?T {
-				if(self.scorer.priority_queue.removeOrNull()) |item| {
-					self.scorer.in_prio.unset(item);
-					return item;
+				if(self.iterator.next()) |item| {
+					return item.node;
 				}
 				return null;
 			}
@@ -105,7 +110,7 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 
 		pub inline fn iterator(self: *Self) TopKScorerIterator {
 			return TopKScorerIterator {
-				.scorer = self
+				.iterator = self.priority_queue.iterator()
 			};
 		}
 
@@ -144,14 +149,33 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 			if(self.in_prio.isSet(visited)) return;
 
 			if(self.priority_queue.count() < K) {
-				self.priority_queue.add(visited) catch unreachable;
+				self.priority_queue.add(TopKQueueEntry {
+					.node = visited,
+					.score = self.backing_storage[visited].score
+				}) catch unreachable;
 				self.in_prio.set(visited);
 			}
 			else {
-				const highest_prio = self.priority_queue.peek().?;
-				if(self.backing_storage[highest_prio].score > self.backing_storage[visited].score) {
-					self.priority_queue.update(highest_prio,visited) catch unreachable;
-					self.in_prio.unset(highest_prio);
+				var score_now_highest:i32 = undefined;
+				while(true) {
+					const highest_prio = self.priority_queue.peek().?;
+					score_now_highest = self.backing_storage[highest_prio.node].score;
+					if(score_now_highest != highest_prio.score) {
+						var hp = self.priority_queue.remove();
+						hp.score = score_now_highest;
+						self.priority_queue.add(hp) catch unreachable;
+					}
+					else {
+						break;
+					}
+				}
+				if(score_now_highest > self.backing_storage[visited].score) {
+					const removed = self.priority_queue.remove();
+					self.priority_queue.add(TopKQueueEntry {
+						.node = visited,
+						.score = self.backing_storage[visited].score
+					}) catch unreachable;
+					self.in_prio.unset(removed.node);
 					self.in_prio.set(visited);
 				}
 			}

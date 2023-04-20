@@ -2,11 +2,6 @@ const std = @import("std");
 const bitset = @import("../util/two_level_bitset.zig");
 const comptime_util = @import("../util/comptime_checks.zig");
 
-pub const EdgeListType = enum(u8) {
-	bitmap,
-	list
-};
-
 pub fn ParametrizedUnsortedArrayList(comptime T: type) type {
 	if (!comptime_util.checkIfIsCompatibleInteger(T)) {
 		@compileError("Type must either be u8,16 or u32!");
@@ -216,7 +211,7 @@ pub fn ParametrizedSortedArrayList(comptime T: type) type {
 			// Larger than 4 cache lines
 			//const threshold = comptime (64/@sizeOf(T))*4;
 			//TODO: Change this to a sensible number again!
-			if(self.edges.items.len >= 1_000_000) {
+			if(self.edges.items.len >= comptime (64/@sizeOf(T))*8) {
 				return self.binarySearch(item);
 			}
 			else {
@@ -240,7 +235,7 @@ pub fn ParametrizedSortedArrayList(comptime T: type) type {
 			while (left < right) {
 				const mid = left + (right - left) / 2; // Avoid overflow.
 				if (self.edges.items[mid] == target) {
-					return .{false,@intCast(u32,mid)};
+					return .{true,@intCast(u32,mid)};
 				} else if (self.edges.items[mid] < target) {
 					left = mid + 1;
 				} else {
@@ -250,6 +245,20 @@ pub fn ParametrizedSortedArrayList(comptime T: type) type {
 			return .{false,@intCast(u32,left)};
 		}
 
+		pub inline fn removeMask(self: *Self, set: *bitset.FastBitSet) void {
+				var i: u32 = 0;
+				var write_ptr: u32 = 0;
+				while(i < self.edges.items.len) : (i+=1) {
+					const item = self.edges.items[i];
+					self.edges.items[write_ptr] = item;
+					if (!set.get(self.edges.items[i])) {
+						write_ptr+=1;	
+					}
+				}
+				self.edges.shrinkRetainingCapacity(write_ptr);
+		}
+			
+
 		pub inline fn remove(self: *Self, item: T) bool {
 			const result = self.nodePosition(item);
 			if(result.@"0" == true) {
@@ -258,4 +267,97 @@ pub fn ParametrizedSortedArrayList(comptime T: type) type {
 			return result.@"0";
 		}
 	};
+}
+
+
+test "ParametrizedSortedArrayList: Add" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer std.debug.assert(!gpa.deinit());
+
+	var list = ParametrizedSortedArrayList(u32).init();
+	defer list.deinit(gpa.allocator());
+
+	_ = try list.add(gpa.allocator(),1);
+	
+	try std.testing.expectEqual(list.contains(1),true);
+	try std.testing.expectEqual(list.contains(2),false);
+
+	// Should not add anything since the item is in the set already
+	try std.testing.expectEqual(try list.add(gpa.allocator(),1),true);
+
+	var iter = list.iterator();
+	var counter:u32 = 0;
+	while(iter.next()) |item| {
+		try std.testing.expectEqual(item,1);
+		counter+=1;
+	}
+	try std.testing.expectEqual(counter,1);
+	try std.testing.expectEqual(counter,list.cardinality());
+}
+
+test "ParametrizedSortedArrayList: Remove" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer std.debug.assert(!gpa.deinit());
+
+	var list = ParametrizedSortedArrayList(u32).init();
+	defer list.deinit(gpa.allocator());
+
+	for(0..500) |item| {
+		_ = try list.add(gpa.allocator(),@intCast(u32,item)*2);
+	}
+	
+	try std.testing.expectEqual(list.contains(1),false);
+	try std.testing.expectEqual(list.contains(2),true);
+	try std.testing.expectEqual(list.binarySearch(300).@"0",true);
+	try std.testing.expectEqual(list.binarySearch(301).@"0",false);
+	try std.testing.expectEqual(list.binarySearch(301).@"1",151);
+
+
+	var iter = list.iterator();
+	var counter:u32 = 0;
+	while(iter.next()) |_| {
+		counter+=1;
+	}
+	try std.testing.expectEqual(counter,500);
+	try std.testing.expectEqual(counter,list.cardinality());
+
+	var result = list.remove(100);
+	try std.testing.expectEqual(result,true);
+	result = list.remove(100);
+	try std.testing.expectEqual(result,false);
+}
+
+test "ParametrizedSortedArrayList: Remove Mask" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer std.debug.assert(!gpa.deinit());
+
+	var list = ParametrizedSortedArrayList(u32).init();
+	defer list.deinit(gpa.allocator());
+
+	var mask = try bitset.FastBitSet.initEmpty(5000, gpa.allocator());
+	defer mask.deinit(gpa.allocator());
+
+	for(0..500) |item| {
+		_ = try list.add(gpa.allocator(),@intCast(u32,item)*2);
+		mask.set(@intCast(u32,item)*4);
+	}
+
+	list.removeMask(&mask);
+	
+	var iter = list.iterator();
+	var counter:u32 = 0;
+
+	var last_item:?u32 = null;
+	while(iter.next()) |item| {
+		counter+=1;
+		if(last_item) |it| {
+			// Expect ordered set
+			try std.testing.expect(it<item);
+		}
+		else {
+			last_item = item;
+		}
+	}
+	try std.testing.expectEqual(counter,250);
+	try std.testing.expectEqual(counter,list.cardinality());
 }

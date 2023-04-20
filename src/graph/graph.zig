@@ -13,8 +13,7 @@ const solver_resources = @import("solver.zig");
 
 const pace_2023 = @import("../pace_2023/pace_fmt.zig");
 
-pub const GraphError = error{ FileNotFound, NotPACEFormat, GraphTooLarge, MisformedEdgeList, InvalidContractionOneNodeErased, ContractionOverflow, NoContractionLeft, RetraceNoParent };
-
+pub const GraphError = error{ FileNotFound, NotPACEFormat, GraphTooLarge, MisformedEdgeList, InvalidContractionOneNodeErased, ContractionOverflow, NoContractionLeft, NegativeNumberOfLeafes };
 
 pub fn Graph(comptime T: type) type {
     comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -30,18 +29,42 @@ pub fn Graph(comptime T: type) type {
         const Self = @This();
         number_of_nodes: u32,
         number_of_edges: u32,
+				// Stores the all nodes the index is also the id of the node
         node_list: []NodeType,
+
+				// Keep track of erased nodes since the node list will not shrink!
         erased_nodes: bitset.FastBitSet,
+
+				// Scratch bitset for dfs/bfs visited etc.
         scratch_bitset: bitset.FastBitSet,
+
+				// The current best contraction sequence
+        contraction: contraction.ContractionSequence(T),
+
+				// An allocator which always report OutOfMemory used to verify assumptions about 
+				// memory consumption being O(2*m) etc.
+				failing_allocator: std.heap.FixedBufferAllocator,
+
+				// Stores all connected components
         connected_components: std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)),
+				// Contains all nodes but permuted so that each slice can will store the nodes in
+				// a connected component consecutive in memory
+				connected_components_node_list_slice: []T,
+				
+				// Max heap keeping track of the component with the largest twin width so that the solver spends the majority of the time there
         connected_components_min_heap: std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc),
+
+				// Main allocator is used to allocate everything that is needed at runtime.
         allocator: std.mem.Allocator,
-        contraction: RetraceableContractionSequence(T),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
         pub inline fn addEdge(self: *Self, u: T, v: T) !void {
+						@setEvalBranchQuota(3000);
+						// At the moment clear the connected component since we have no efficient way to find out
+						// to which connected component a node belongs
             self.connected_components.clearRetainingCapacity();
+						// Clear out the min heap
             self.connected_components_min_heap.shrinkAndFree(0);
             std.debug.assert(u < self.node_list.len);
             std.debug.assert(v < self.node_list.len);
@@ -49,48 +72,202 @@ pub fn Graph(comptime T: type) type {
             const u_node = &self.node_list[u];
             const v_node = &self.node_list[v];
 
-            _ = try u_node.black_edges.add(self.allocator, v);
-            _ = try v_node.black_edges.add(self.allocator, u);
+						// Normally addContraction keeps track of the number of leafes in each node the initialization
+						// needs to keep track of that by itself
+						if(u_node.cardinality() == 0) {
+							v_node.num_leafes+=1;
+						}
+						else if(u_node.isLeaf()) {
+							self.node_list[u_node.getFirstNeighboor()].num_leafes-=1;
+						}
+
+						if(v_node.cardinality() == 0) {
+							u_node.num_leafes+=1;
+						}
+						else if(v_node.isLeaf()) {
+							self.node_list[v_node.getFirstNeighboor()].num_leafes-=1;
+						}
+
+            _ = try u_node.addBlackEdge(self.allocator, v);
+            _ = try v_node.addBlackEdge(self.allocator, u);
 
             self.number_of_edges += 1;
         }
 
-        pub inline fn memoryUsage(self: *Self) usize {
-            return self.allocator.end_index;
+        pub inline fn getCurrentTwinWidth(self: *Self) u32 {
+						// Tww is the largest CC Tww
+            if (self.connected_components_min_heap.peek()) |largest_cc| {
+                return largest_cc.tww;
+            }
+            return 0;
         }
 
-        pub inline fn getCurrentTwinWidth(self: *const Self) u32 {
-            return self.contraction.getTwinWidth();
+        pub fn revertLastContraction(self: *Self, seq: *RetraceableContractionSequence(T)) !void {
+						// WARNING: Is not usable yet since it will not restore num leafes at the moment this function will not restore exactly the same state as before!
+            if (seq.lastContraction()) |last| {
+                self.scratch_bitset.unsetAll();
+                _ = self.erased_nodes.unset(last.erased);
+
+                var black_iter = self.node_list[last.erased].black_edges.iterator();
+                // Add black edges
+                while (black_iter.next()) |black_edge| {
+                    try self.node_list[black_edge].addBlackEdge(self.allocator, last.erased);
+                }
+
+                var red_iter = self.node_list[last.erased].red_edges.iterator();
+                // Add black edges
+                while (red_iter.next()) |red_edge| {
+                    self.scratch_bitset.set(red_edge);
+                    try self.node_list[red_edge].addRedEdge(self.allocator, last.erased);
+                }
+
+                // Remove all red edges which are set in the erased set
+                self.node_list[last.survivor].red_edges.removeMask(&self.scratch_bitset);
+
+                // Add back all red edges that were deleted by the merge and all black edges that were deleted by the merge
+                var iter_last = try seq.red_edge_stack.iterateLastLevel();
+                while (iter_last.next()) |red_edge| {
+                    switch (red_edge.edge_type) {
+                        .black_to_red_own => {
+														// Remove red edge
+														_ = try self.node_list[last.survivor].red_edges.remove(self.allocator, red_edge.target);
+														_ = try self.node_list[red_edge.target].red_edges.remove(self.allocator, last.survivor);
+
+														// Readd black edge
+                            try self.node_list[last.survivor].black_edges.add(self.allocator, red_edge.target);
+                            try self.node_list[red_edge.target].black_edges.add(self.allocator, last.survivor);
+												},
+                        .black_to_red_other => {
+														// Remove red edge
+														_ = try self.node_list[last.survivor].red_edges.remove(self.allocator,red_edge.target);
+														_ = try self.node_list[red_edge.target].red_edges.remove(self.allocator,last.survivor);
+												},
+												.black_to_deleted => {
+                            try self.node_list[last.survivor].black_edges.add(self.allocator, red_edge.target);
+                            try self.node_list[red_edge.target].black_edges.add(self.allocator, last.survivor);
+                        },
+                        .red_to_deleted => {
+                            try self.node_list[last.survivor].red_edges.add(self.allocator, red_edge.target);
+                            try self.node_list[red_edge.target].red_edges.add(self.allocator, last.survivor);
+                        },
+                    }
+                }
+
+								// Inform the red edge stack about the revert
+								try seq.removeLast();
+            }
         }
 
-        pub fn reverseLastContraction(self: *Self) !void {
-            _ = self;
-        }
+        pub const InducedTwinWidthPotential = struct {
+            tww: T,
+            cumulative_red_edges: i64,
+            pub inline fn default() InducedTwinWidthPotential {
+                return InducedTwinWidthPotential{
+                    .tww = std.math.maxInt(T),
+										.cumulative_red_edges = std.math.maxInt(i64),
+                };
+            }
 
-        pub const InducedTwinWidth = struct { 
-					tww: T,
-					delta_red_edges: i32,
-					pub inline fn default() InducedTwinWidth {
-						return InducedTwinWidth {
-							.tww = std.math.maxInt(T),
-							.delta_red_edges = std.math.maxInt(i32),
-						};
-					}
+            pub inline fn reset(self: *InducedTwinWidthPotential) void {
+                self.tww = std.math.maxInt(T);
+                self.cumulative_red_edges = std.math.maxInt(i64);
+            }
 
-					pub inline fn reset(self: *InducedTwinWidth) void {
-						self.tww = std.math.maxInt(T);
-						self.delta_red_edges = std.math.maxInt(i32);
-					}
+            pub inline fn isLess(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) bool {
+							if(self.tww >= current_twin_width or other.tww >= current_twin_width) {
+								if (self.tww < other.tww or (self.tww == other.tww and self.cumulative_red_edges < other.cumulative_red_edges)) {
+									return true;
+								} else {
+									return false;
+								}
+							}
+							else {
+								return self.cumulative_red_edges < other.cumulative_red_edges;
+							}
+            }
+        };
 
-					pub inline fn lessThan(self: InducedTwinWidth, other: InducedTwinWidth) bool {
-						if(self.tww < other.tww or (self.tww == other.tww and self.delta_red_edges < other.delta_red_edges)) {
-							return true;
+
+				
+
+        pub fn calculateInducedTwwPotential(self: *Self, erased: T, survivor: T) InducedTwinWidthPotential {
+						// NOTICE: This function performs better than calculateInducedTww at the moment
+						var red_potential:i64 = 0;
+
+            var delta_red: T = 0;
+						var red_iter = self.node_list[erased].red_edges.iterator();
+
+						// Intuition is as following:
+						// New red edges to nodes with a lot of red edges should decrease
+						// the probability of taking  this move
+
+						while (red_iter.next()) |item| {
+							if(item == survivor) continue;
+
+							if(!self.node_list[survivor].red_edges.contains(item)) {
+								delta_red += 1;
+							}
+							else {
+								// We destroyed a red edge update potential
+								red_potential -= self.node_list[item].red_edges.cardinality();
+							}
 						}
-						else {
-							return false;
-						}
-					}
-				};
+
+						delta_red += self.node_list[survivor].red_edges.cardinality();
+
+            var tww: T = 0;
+            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+            while (black_iter.next()) |item| {
+                if (item == survivor or item == erased) {
+                    continue;
+                }
+                // Came from erased
+                if (black_iter.first) {
+                    if (!self.node_list[survivor].red_edges.contains(item)) {
+                        delta_red += 1;
+												red_potential += self.node_list[item].red_edges.cardinality()+1;
+                        tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
+                    }
+                }
+                // Came from survivor
+                else {
+                    delta_red += 1;
+										red_potential += self.node_list[item].red_edges.cardinality()+1;
+                    tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
+                }
+            }
+
+            tww = std.math.max(tww, delta_red);
+            return InducedTwinWidthPotential{ .tww = tww, .cumulative_red_edges = red_potential};
+        }
+
+        pub const InducedTwinWidth = struct {
+            tww: T,
+            delta_red_edges: i32,
+            pub inline fn default() InducedTwinWidth {
+                return InducedTwinWidth{
+                    .tww = std.math.maxInt(T),
+                    .delta_red_edges = std.math.maxInt(i32),
+                };
+            }
+
+            pub inline fn reset(self: *InducedTwinWidth) void {
+                self.tww = std.math.maxInt(T);
+                self.delta_red_edges = std.math.maxInt(i32);
+            }
+
+            pub inline fn lessThan(self: InducedTwinWidth, other: InducedTwinWidth) bool {
+                if (self.tww < other.tww or (self.tww == other.tww and self.delta_red_edges < other.delta_red_edges)) {
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+        };
+
+
+				
 
         pub fn calculateInducedTww(self: *Self, erased: T, survivor: T, upper_bound: ?T) InducedTwinWidth {
             const erased_cardinality_red = self.node_list[erased].red_edges.cardinality();
@@ -175,82 +352,55 @@ pub fn Graph(comptime T: type) type {
             return InducedTwinWidth{ .tww = tww, .delta_red_edges = delta_red_edges };
         }
 
-				pub fn addContractionNewRedEdges(self: *Self, erased: T, survivor: T, new_red_edges: *std.ArrayListUnmanaged(T), first_level_merge: *bool ) !T {
+				pub inline fn updateLeafCount(self: *Self, node: T) void {
+					if(self.node_list[node].isLeaf()) {
+						const parent = self.node_list[node].getFirstNeighboor();
+						self.node_list[parent].num_leafes+=1;
+						self.node_list[node].num_leafes = if (self.node_list[parent].isLeaf()) 1 else 0;
+					}
+					else {
+						var nb_iter = self.node_list[node].unorderedIterator();
+						var count:T = 0;
+						while(nb_iter.next()) |item| {
+							if(self.node_list[item].isLeaf()) {
+								count+=1;
+							}
+						}
+						self.node_list[node].num_leafes = count;
+					}
+				}
+
+        pub fn addContraction(self: *Self, erased: T, survivor: T, seq: *RetraceableContractionSequence(T)) !T {
             if (self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
+								std.debug.print("Result {} {}\n",.{erased,survivor});
                 return GraphError.InvalidContractionOneNodeErased;
             }
-						first_level_merge.* = false;
+						else if(erased == survivor) {
+							return GraphError.MisformedEdgeList;
+						}
+
             self.erased_nodes.set(erased);
+						if(self.node_list[survivor].isLeaf()) {
+							const parent = self.node_list[survivor].getFirstNeighboor();
+							self.node_list[parent].num_leafes-=1;
+						}
+						if(self.node_list[erased].isLeaf()) {
+							const parent = self.node_list[erased].getFirstNeighboor();
+							self.node_list[parent].num_leafes-=1;
+						}
+
             var red_iter = self.node_list[erased].red_edges.iterator();
             while (red_iter.next()) |item| {
-                if (item != survivor) {
-                    if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
-												try new_red_edges.append(self.allocator,item);
-                        try self.node_list[item].addRedEdge(self.allocator, survivor);
-                    }
-                }
-								else {
-									first_level_merge.* = true;
-								}
                 try self.node_list[item].removeRedEdge(self.allocator, erased);
-            }
-
-            var tww: T = 0;
-            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
-
-            var remove_list = std.ArrayList(T).init(self.allocator);
-            defer remove_list.deinit();
-
-            while (black_iter.next()) |item| {
-                if (item == survivor or item == erased) {
-										first_level_merge.* = true;
-                    continue;
-                }
-                // Came from erased
-                if (black_iter.first) {
-                    if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
-												try new_red_edges.append(self.allocator,item);
-                        try self.node_list[item].addRedEdge(self.allocator, survivor);
-                    }
-                }
-                // Came from survivor
-                else {
-                    try self.node_list[survivor].addRedEdge(self.allocator, item);
-                    try self.node_list[item].addRedEdge(self.allocator, survivor);
-
-                    try self.node_list[item].removeBlackEdge(self.allocator, survivor);
-                    try remove_list.append(item);
-                }
-                tww = std.math.max(tww, @intCast(T, self.node_list[item].red_edges.cardinality()));
-            }
-
-            for (remove_list.items) |item| {
-                try self.node_list[survivor].removeBlackEdge(self.allocator, item);
-            }
-
-            var black_remove_iter = self.node_list[erased].black_edges.iterator();
-            while (black_remove_iter.next()) |item| {
-                try self.node_list[item].removeBlackEdge(self.allocator, erased);
-            }
-
-            tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
-            try self.contraction.addContraction(erased, survivor, std.math.max(tww, self.contraction.getTwinWidth()));
-            return tww;
-        }
-
-        pub fn addContraction(self: *Self, erased: T, survivor: T) !T {
-            if (self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
-                return GraphError.InvalidContractionOneNodeErased;
-            }
-            self.erased_nodes.set(erased);
-            var red_iter = self.node_list[erased].red_edges.iterator();
-            while (red_iter.next()) |item| {
                 if (item != survivor) {
                     if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
                     }
+										else {
+											// Inform about the removal of the red edge
+											try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(),red_edge_stack.NewRedEdge(T).redToDeleted(item));
+										}
                 }
-                try self.node_list[item].removeRedEdge(self.allocator, erased);
             }
 
             var tww: T = 0;
@@ -266,63 +416,86 @@ pub fn Graph(comptime T: type) type {
                 // Came from erased
                 if (black_iter.first) {
                     if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+												try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(),red_edge_stack.NewRedEdge(T).blackToRedOther(item));
+
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
                     }
                 }
                 // Came from survivor
                 else {
-                    try self.node_list[survivor].addRedEdge(self.allocator, item);
+                    if(try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+											// If it existed before we inherited from erased
+
+											try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(),red_edge_stack.NewRedEdge(T).blackToDeleted(item));
+										}
+										else {
+											// Did not exist therefore turned
+											try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(),red_edge_stack.NewRedEdge(T).blackToRedOwn(item));
+										}
                     try self.node_list[item].addRedEdge(self.allocator, survivor);
 
                     try self.node_list[item].removeBlackEdge(self.allocator, survivor);
                     try remove_list.append(item);
-                }
+									}
                 tww = std.math.max(tww, @intCast(T, self.node_list[item].red_edges.cardinality()));
             }
 
             for (remove_list.items) |item| {
+								//try self.min_hash.removeNode(self.allocator,item, &self.node_list[item].black_edges);
+								// Batch remove?
                 try self.node_list[survivor].removeBlackEdge(self.allocator, item);
+								//try self.min_hash.hashNodeNeighborhood(self.allocator,item, &self.node_list[item].black_edges);
             }
 
             var black_remove_iter = self.node_list[erased].black_edges.iterator();
             while (black_remove_iter.next()) |item| {
                 try self.node_list[item].removeBlackEdge(self.allocator, erased);
             }
+						
+						//try self.min_hash.hashNodeNeighborhood(self.allocator,survivor, &self.node_list[survivor].black_edges);
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
-            try self.contraction.addContraction(erased, survivor, std.math.max(tww, self.contraction.getTwinWidth()));
+            try seq.addContraction(self.allocator, erased, survivor, std.math.max(tww, seq.getTwinWidth()));
+
+						self.updateLeafCount(survivor);
             return tww;
         }
 
         pub fn solveGreedy(self: *Self) !T {
-						var solver = try solver_resources.SolverResources(T,10,100).init(self);
-						defer solver.deinit(self.allocator);
-						var cc_iter = self.connected_components_min_heap.iterator();
-						var tww:T = 0;
-						var last_node:?T = null;
-						while(cc_iter.next()) |cc| {
-							tww = std.math.max(try self.connected_components.items[cc.index].solveGreedyTopK(10,100,&solver),tww);
-							if(self.connected_components.items[cc.index].subgraph.nodes.cardinality() == 1) {
-								const survivor = self.connected_components.items[cc.index].subgraph.nodes.edges.items[0];
-								if(last_node) |ln| {
-									_ = try self.addContraction(survivor,ln);
-								}
-								else {
-									last_node = survivor;
-								}
-							}
-							else if(self.contraction.lastContraction()) |ctr| {
-								if(last_node) |ln| {
-									_ = try self.addContraction(ctr.survivor,ln);
-								}
-								else {
-									last_node = ctr.survivor;
-								}
-							}
-							solver.reset();
-						}
-						//std.debug.print("Contraction len {} graph len {}\n",.{self.contraction.seq.isComplete(),self.number_of_nodes});
-						return tww;
+						// NOTICE: This function is single pass at the moment!
+            var solver = try solver_resources.SolverResources(T, 25, 100).init(self);
+            defer solver.deinit(self.allocator);
+            var cc_iter = self.connected_components_min_heap.iterator();
+            var tww: T = 0;
+            var last_node: ?T = null;
+            self.contraction.reset();
+            while (cc_iter.next()) |cc| {
+                tww = std.math.max(try self.connected_components.items[cc.index].solveGreedyTopK(25, 100, &solver), tww);
+
+                if (self.connected_components.items[cc.index].subgraph.nodes.len == 1) {
+                    const survivor = self.connected_components.items[cc.index].subgraph.nodes[0];
+                    if (last_node) |ln| {
+                        try self.contraction.addContraction(contraction.Contraction(T){
+                            .erased = survivor,
+                            .survivor = ln,
+                        });
+                    } else {
+                        last_node = survivor;
+                    }
+                } else if (self.connected_components.items[cc.index].current_contraction_seq.lastContraction()) |ctr| {
+                    try self.contraction.append(&self.connected_components.items[cc.index].current_contraction_seq.seq);
+                    if (last_node) |ln| {
+                        try self.contraction.addContraction(contraction.Contraction(T){
+                            .erased = ctr.survivor,
+                            .survivor = ln,
+                        });
+                    } else {
+                        last_node = ctr.survivor;
+                    }
+                }
+                solver.reset();
+            }
+            return tww;
         }
 
         pub fn new(number_of_nodes: T, allocator: std.mem.Allocator) !Self {
@@ -331,22 +504,16 @@ pub fn Graph(comptime T: type) type {
             for (node_list) |*node| {
                 node.black_edges = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).init(number_of_nodes);
                 node.red_edges = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).init(number_of_nodes);
-								node.high_degree_node = null;
+                node.high_degree_node = null;
+								node.num_leafes = 0;
             }
 
             //TODO: Add some errdefer's here
 
-            var graph = Self{
-                .number_of_nodes = number_of_nodes,
-                .number_of_edges = 0,
-                .node_list = node_list,
-                .allocator = allocator,
-                .scratch_bitset = try bitset.FastBitSet.initEmpty(number_of_nodes, allocator),
-                .erased_nodes = try bitset.FastBitSet.initEmpty(number_of_nodes, allocator),
-                .connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){},
-                .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
-                .contraction = try RetraceableContractionSequence(T).init(allocator, number_of_nodes),
-            };
+            var graph = Self{ .number_of_nodes = number_of_nodes, .number_of_edges = 0, .node_list = node_list, .allocator = allocator, .contraction = try contraction.ContractionSequence(T).init(allocator, number_of_nodes), .scratch_bitset = try bitset.FastBitSet.initEmpty(number_of_nodes, allocator), .erased_nodes = try bitset.FastBitSet.initEmpty(number_of_nodes, allocator), .connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){}, .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
+						.failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
+						.connected_components_node_list_slice = try allocator.alloc(T,number_of_nodes),
+						};
 
             return graph;
         }
@@ -361,29 +528,39 @@ pub fn Graph(comptime T: type) type {
             for (0..pace.number_of_nodes) |index| {
                 node_list[index].black_edges = try compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).fromUnsorted(allocator, &pace.nodes[index].edges, @intCast(T, pace.number_of_nodes));
                 node_list[index].red_edges = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).init(@intCast(T, pace.number_of_nodes));
-								node_list[index].high_degree_node = null;
+                node_list[index].high_degree_node = null;
+								node_list[index].num_leafes = 0;
             }
+
+            for (0..pace.number_of_nodes) |index| {
+							if(node_list[index].cardinality() == 1) {
+								const parent = node_list[index].getFirstNeighboor();
+								node_list[parent].num_leafes+=1;
+							}
+						}
 
             // Remove allocations on failure
             errdefer {
                 for (node_list) |*node| {
                     node.black_edges.deinit(allocator);
                     node.red_edges.deinit(allocator);
-										node.high_degree_node = null;
+                    node.high_degree_node = null;
                 }
                 allocator.free(node_list);
             }
 
-            return Self {
+            return Self{
                 .number_of_nodes = pace.number_of_nodes,
                 .number_of_edges = pace.number_of_edges, //ATM
                 .node_list = node_list,
                 .allocator = allocator,
+                .contraction = try contraction.ContractionSequence(T).init(allocator, pace.number_of_nodes),
                 .erased_nodes = try bitset.FastBitSet.initEmpty(pace.number_of_nodes, allocator),
                 .scratch_bitset = try bitset.FastBitSet.initEmpty(pace.number_of_nodes, allocator),
                 .connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){},
+								.connected_components_node_list_slice = try allocator.alloc(T,pace.number_of_nodes),
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
-                .contraction = try RetraceableContractionSequence(T).init(allocator, pace.number_of_nodes),
+								.failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
             };
         }
 
@@ -394,26 +571,25 @@ pub fn Graph(comptime T: type) type {
 
             var unsetIter = self.scratch_bitset.iterUnset();
             var components: u32 = 0;
-            var total_sum: u32 = 0;
-            var largest: u32 = 0;
-            var node_list = edge_list.ParametrizedUnsortedArrayList(T).init();
+
+						var current_slice_start: u32 = 0;
+						var current_slice_ptr: u32 = 0;
 
             while (unsetIter.next()) |item| {
                 if (self.scratch_bitset.get(item)) {
                     continue;
                 }
-                var iterator = bfs_mod.bfs(T, @intCast(T,item), self, &self.scratch_bitset, &bfs_stack, .{ .max_level = std.math.maxInt(T), .kind = .black });
+                var iterator = bfs_mod.bfs(T, @intCast(T, item), self, &self.scratch_bitset, &bfs_stack, .{ .max_level = std.math.maxInt(T), .kind = .black });
 
                 while (iterator.next()) |node| {
                     self.scratch_bitset.set(node);
-                    try node_list.add(self.allocator, node);
+										self.connected_components_node_list_slice[current_slice_ptr] = node;
+										current_slice_ptr+=1;
                 }
 
                 components += 1;
-                total_sum += node_list.cardinality();
-                largest = std.math.max(largest, node_list.cardinality());
-                try self.connected_components.append(self.allocator, try connected_components.ConnectedComponent(T).init(self.allocator, node_list, iterator.level,self));
-                node_list = edge_list.ParametrizedUnsortedArrayList(T).init();
+                try self.connected_components.append(self.allocator, try connected_components.ConnectedComponent(T).init(self.allocator, self.connected_components_node_list_slice[current_slice_start..current_slice_ptr], iterator.level, self));
+								current_slice_start = current_slice_ptr;
             }
 
             try self.connected_components_min_heap.ensureTotalCapacity(self.connected_components.items.len);
@@ -435,7 +611,8 @@ pub fn Graph(comptime T: type) type {
                 connected_component.deinit(self.allocator);
             }
             self.connected_components.deinit(self.allocator);
-            self.contraction.deinit();
+            self.contraction.deinit(self.allocator);
+						self.allocator.free(self.connected_components_node_list_slice);
             self.scratch_bitset.deinit(self.allocator);
             self.erased_nodes.deinit(self.allocator);
             self.allocator.free(self.node_list);
@@ -447,7 +624,9 @@ test "Check simple loading" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny001.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny001.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
@@ -459,16 +638,34 @@ test "Test contraction Tiny 1" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny001.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny001.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 9);
+    defer ret.deinit(allocator.allocator());
+
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
     try std.testing.expectEqual(graph.number_of_nodes, 10);
     try std.testing.expectEqual(graph.number_of_edges, 9);
+		try std.testing.expectEqual(graph.node_list[8].num_leafes,1);
+		try std.testing.expectEqual(graph.node_list[1].num_leafes,1);
 
     var i: u8 = 9;
     while (i > 0) {
-        var tww = try graph.addContraction(i - 1, 9);
+				if(i>2) {
+					try std.testing.expectEqual(graph.node_list[i-1].num_leafes,1);
+				}
+				else if(i==2) {
+					try std.testing.expectEqual(graph.node_list[i-1].num_leafes,2);
+				}
+				else if(i==1) {
+					try std.testing.expectEqual(graph.node_list[9].num_leafes,1);
+					try std.testing.expectEqual(graph.node_list[0].num_leafes,1);
+				}
+        var tww = try graph.addContraction(i - 1, 9, &ret);
         if (i > 1) {
             try std.testing.expectEqual(@as(u32, 1), tww);
         } else {
@@ -482,7 +679,13 @@ test "Test contraction Tiny 2" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny002.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny002.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 10);
+    defer ret.deinit(allocator.allocator());
+
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
@@ -491,7 +694,7 @@ test "Test contraction Tiny 2" {
 
     var i: u8 = 9;
     while (i > 0) {
-        var tww = try graph.addContraction(i - 1, 9);
+        var tww = try graph.addContraction(i - 1, 9, &ret);
         if (i > 2) {
             try std.testing.expectEqual(@as(u32, 2), tww);
         } else if (i > 1) {
@@ -501,13 +704,47 @@ test "Test contraction Tiny 2" {
         }
         i -= 1;
     }
+}
+
+
+test "Test contraction custom" {
+    var allocator = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(!allocator.deinit());
+
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 10);
+    defer ret.deinit(allocator.allocator());
+
+    var graph = try Graph(u8).new(10,allocator.allocator());
+    // Free ressources
+    defer graph.deinit();
+
+    try std.testing.expectEqual(graph.number_of_nodes, 10);
+
+		try graph.addEdge(0,1);
+		try graph.addEdge(1,2);
+		try graph.addEdge(2,3);
+		try graph.addEdge(3,4);
+		try graph.addEdge(4,5);
+		try graph.addEdge(5,6);
+    _ = try graph.addContraction(0, 6, &ret);
+		var i:u8 = 9;
+    while (i > 0) {
+			try std.testing.expectEqual(graph.node_list[i].num_leafes,0);
+			i-=1;
+		}
 }
 
 test "Test contraction retrace Tiny 2" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny002.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny002.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 10);
+    defer ret.deinit(allocator.allocator());
+
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
@@ -516,7 +753,11 @@ test "Test contraction retrace Tiny 2" {
 
     var i: u8 = 9;
     while (i > 0) {
-        var tww = try graph.addContraction(i - 1, 9);
+				if(i==1) {
+					try std.testing.expectEqual(graph.node_list[9].num_leafes,1);
+					try std.testing.expectEqual(graph.node_list[0].num_leafes,1);
+				}
+        var tww = try graph.addContraction(i - 1, 9, &ret);
         if (i > 2) {
             try std.testing.expectEqual(@as(u32, 2), tww);
         } else if (i > 1) {
@@ -526,31 +767,43 @@ test "Test contraction retrace Tiny 2" {
         }
         i -= 1;
     }
-    i = 9;
-    while (i > 0) {
-        try graph.reverseLastContraction();
+    //i = 9;
+    //while (i > 0) {
+    //    try graph.revertLastContraction(&ret);
 
-        const tww = graph.getCurrentTwinWidth();
+     //   const tww = ret.getTwinWidth();
 
-        if (i == 9) {
-            try std.testing.expectEqual(@as(u32, 2), tww);
-        } else if (i == 1) {
-            try std.testing.expectEqual(@as(u32, 0), tww);
-        } else {
-            try std.testing.expectEqual(@as(u32, 2), tww);
-        }
-        for (graph.node_list) |*node| {
-            try std.testing.expect(node.red_edges.cardinality() <= tww);
-        }
-        i -= 1;
-    }
+       // if (i == 9) {
+      //      try std.testing.expectEqual(@as(u32, 2), tww);
+      //  } else if (i == 1) {
+      //      try std.testing.expectEqual(@as(u32, 0), tww);
+      //  } else {
+      //      try std.testing.expectEqual(@as(u32, 2), tww);
+      //  }
+      //  for (graph.node_list) |*node| {
+      //      try std.testing.expect(node.red_edges.cardinality() <= tww);
+      //  }
+      //  i -= 1;
+   // }
+	//	var count:u32 = 0;
+	//	for(graph.node_list) |node| {
+  //    try std.testing.expectEqual(node.red_edges.cardinality(),0);
+//			count+=node.black_edges.cardinality();
+//		}
+ //   try std.testing.expectEqual(count, 20);
 }
 
 test "Test contraction Tiny 3" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny003.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny003.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 10);
+    defer ret.deinit(allocator.allocator());
+
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
@@ -559,7 +812,7 @@ test "Test contraction Tiny 3" {
 
     var i: u8 = 9;
     while (i > 0) {
-        var tww = try graph.addContraction(i - 1, 9);
+        var tww = try graph.addContraction(i - 1, 9, &ret);
         try std.testing.expectEqual(@as(u32, 0), tww);
         i -= 1;
     }
@@ -569,7 +822,12 @@ test "Test contraction retrace Tiny 3" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny003.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny003.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 45);
+    defer ret.deinit(allocator.allocator());
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
@@ -578,27 +836,33 @@ test "Test contraction retrace Tiny 3" {
 
     var i: u8 = 9;
     while (i > 0) {
-        var tww = try graph.addContraction(i - 1, 9);
+        var tww = try graph.addContraction(i - 1, 9, &ret);
         try std.testing.expectEqual(@as(u32, 0), tww);
         i -= 1;
     }
-    i = 9;
-    while (i > 0) {
-        try graph.reverseLastContraction();
-        var tww = graph.getCurrentTwinWidth();
-        try std.testing.expectEqual(@as(u32, 0), tww);
-        for (graph.node_list) |*node| {
-            try std.testing.expect(node.red_edges.cardinality() <= tww);
-        }
-        i -= 1;
-    }
+    //i = 9;
+    //while (i > 0) {
+    //    try graph.revertLastContraction(&ret);
+    //    var tww = graph.getCurrentTwinWidth();
+    //    try std.testing.expectEqual(@as(u32, 0), tww);
+    //    for (graph.node_list) |*node| {
+    //        try std.testing.expect(node.red_edges.cardinality() <= tww);
+     //   }
+     //   i -= 1;
+   // }
 }
 
 test "Test contraction Tiny 4" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny004.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny004.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 9);
+    defer ret.deinit(allocator.allocator());
+
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
@@ -607,7 +871,8 @@ test "Test contraction Tiny 4" {
 
     var i: u8 = 9;
     while (i > 0) {
-        var tww = try graph.addContraction(i - 1, 9);
+				try std.testing.expectEqual(graph.node_list[0].num_leafes,i);
+        var tww = try graph.addContraction(i - 1, 9, &ret);
         try std.testing.expectEqual(@as(u32, 0), tww);
         i -= 1;
     }
@@ -617,7 +882,11 @@ test "Test contraction retrace Tiny 4" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny004.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny004.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 9);
+    defer ret.deinit(allocator.allocator());
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
@@ -626,27 +895,32 @@ test "Test contraction retrace Tiny 4" {
 
     var i: u8 = 9;
     while (i > 0) {
-        var tww = try graph.addContraction(i - 1, 9);
+        var tww = try graph.addContraction(i - 1, 9, &ret);
         try std.testing.expectEqual(@as(u32, 0), tww);
         i -= 1;
     }
-    i = 9;
-    while (i > 0) {
-        try graph.reverseLastContraction();
-        var tww = graph.getCurrentTwinWidth();
-        try std.testing.expectEqual(@as(u32, 0), tww);
-        for (graph.node_list) |*node| {
-            try std.testing.expect(node.red_edges.cardinality() <= tww);
-        }
-        i -= 1;
-    }
+   // i = 9;
+   // while (i > 0) {
+   //     try graph.revertLastContraction(&ret);
+   //     var tww = graph.getCurrentTwinWidth();
+   //     try std.testing.expectEqual(@as(u32, 0), tww);
+   //     for (graph.node_list) |*node| {
+   //         try std.testing.expect(node.red_edges.cardinality() <= tww);
+   //     }
+   //     i -= 1;
+   // }
 }
 
 test "Test contraction Tiny 6" {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = try Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny006.gr");
+    var pace_fmt = try pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny006.gr");
+    defer pace_fmt.deinit(allocator.allocator());
+
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 5);
+    defer ret.deinit(allocator.allocator());
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     // Free ressources
     defer graph.deinit();
 
@@ -656,7 +930,7 @@ test "Test contraction Tiny 6" {
     var i: u8 = 9;
     var tww: u32 = 0;
     while (true) {
-        tww = std.math.max(tww, try graph.addContraction(i - 1, i));
+        tww = std.math.max(tww, try graph.addContraction(i - 1, i, &ret));
         if (i == 1) {
             break;
         }
@@ -670,11 +944,12 @@ test "Check simple failed loading" {
     // Should never fail since the ressources should be managed
     defer std.debug.assert(!allocator.deinit());
 
-    var graph = Graph(u8).loadFromPace(allocator.allocator(), "instances/tiny/tiny001.graph") catch |err| {
-        // Loading should fail with file not found
+    var pace_fmt = pace_2023.Pace2023Fmt(u8).fromFile(allocator.allocator(), "instances/tiny/tiny001.grfailure") catch |err| {
         try std.testing.expectEqual(err, error.FileNotFound);
         return;
     };
+
+    var graph = try Graph(u8).loadFromPace(allocator.allocator(), &pace_fmt);
     _ = graph;
     // Should never be reached
     std.debug.assert(false);
@@ -687,12 +962,15 @@ test "Check simple graph" {
 
     var graph = try Graph(u8).new(5, allocator.allocator());
 
+    var ret = try RetraceableContractionSequence(u8).init(allocator.allocator(), 10, 4);
+    defer ret.deinit(allocator.allocator());
+
     try graph.addEdge(0, 1);
     try graph.addEdge(1, 2);
     try graph.addEdge(1, 3);
     try graph.addEdge(1, 4);
 
-    _ = try graph.addContraction(1, 0);
+    _ = try graph.addContraction(1, 0, &ret);
 
     try std.testing.expectEqual(graph.node_list[0].red_edges.cardinality(), 3);
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const bitset = @import("../util/two_level_bitset.zig");
 const Graph = @import("graph.zig").Graph;
 const comptime_util = @import("../util/comptime_checks.zig");
+const solver = @import("solver.zig");
 
 pub const DfsKind = enum { red, black, both };
 
@@ -83,83 +84,89 @@ pub inline fn dfs(comptime T: type, start_node: T, graph: *const Graph(T), visit
     };
 }
 
-pub const ArticulationPoints = struct {
+pub fn NodeStackEntry(comptime T: type) type {
+	return struct {
+		node: T,
+		parent: T,
+		recurse_update: bool
+	};
+}
 
-};
+pub fn findArticulationPoints(comptime T: type, root_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, resources: *solver.ArticulationPointResources(T)) !void {
+		var failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{});
+		var allc = failing_allocator.allocator();
 
-pub fn findArticulationPoints(comptime T: type, root_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet) !void {
-		var parent_array = try graph.allocator.alloc(T,graph.number_of_nodes);
-		defer graph.allocator.free(parent_array);
+		resources.articulation_points.unsetAll();
+		resources.parent_array[root_node] = root_node;
+		resources.depth_array[root_node] = 0;
+		resources.low_array[root_node] = 0;
+		resources.node_stack.shrinkRetainingCapacity(0);
 
-		var depth_array = try graph.allocator.alloc(T,graph.number_of_nodes);
-		defer graph.allocator.free(depth_array);
-
-		var low_array = try graph.allocator.alloc(T,graph.number_of_nodes);
-		defer graph.allocator.free(low_array);
-
-		var aritculation_points = try bitset.FastBitSet.initEmpty(graph.number_of_nodes,graph.allocator);
-		defer aritculation_points.deinit(graph.allocator);
-
-		var node_stack = try std.ArrayListUnmanaged(T).initCapacity(graph.allocator,2*graph.number_of_edges);
-		var depth_stack = try std.ArrayListUnmanaged(T).initCapacity(graph.allocator,2*graph.number_of_edges);
-
-		try node_stack.append(graph.allocator,root_node);
-		try depth_stack.append(graph.allocator,0);
+		try resources.node_stack.append(allc, NodeStackEntry(T) {
+			.node = root_node,
+			.parent = root_node,
+			.recurse_update = false
+		});
 
 		var root_children:T = 0;
 
-		var node_before:T = root_node;
-		while(node_stack.popOrNull()) |item| {
-			const current_depth = depth_stack.pop();
-
+		while(resources.node_stack.popOrNull()) |item| {
+			
 			// Item does not exist yet
-			if(!visited.setExists(item)) {
-				parent_array[item] = node_before;
-				low_array[item] = current_depth;
-				depth_array[item] = current_depth;
-
-				if(node_before == root_node and item != root_node) {
+			if(!visited.setExists(item.node)) {
+				if(item.parent == root_node and item.node != root_node) {
 					root_children+=1;
 				}
-				var black_iter = graph.node_list[item].black_edges.iterator();
-				while (black_iter.next()) |child| {
-					// Revisit ourselves after
-					if(!visited.get(child)) {
-						try node_stack.append(graph.allocator,item);
-						try depth_stack.append(graph.allocator,current_depth);
+				resources.parent_array[item.node] = item.parent;
+				resources.depth_array[item.node] = resources.depth_array[item.parent]+1;
+				resources.low_array[item.node] = resources.depth_array[item.parent]+1;
+				resources.node_count[item.node] = 1;
 
-						try node_stack.append(graph.allocator,child);
-						try depth_stack.append(graph.allocator,current_depth+1);
+				var iter_nodes = graph.node_list[item.node].orderedIterator();
+				while(iter_nodes.next()) |next_node| {
+					if(!visited.get(next_node)) {
+						try resources.node_stack.append(allc,NodeStackEntry(T) {
+								.node = item.node,
+								.parent = next_node,
+								.recurse_update = true
+								});
+						try resources.node_stack.append(allc,NodeStackEntry(T) {
+								.node = next_node,
+								.parent = item.node,
+								.recurse_update = false
+								});
 					}
-					else {
-						low_array[item] = std.math.min(low_array[item],depth_array[node_before]);
+					else if (next_node != resources.parent_array[item.node]){
+						resources.low_array[item.node] = std.math.min(resources.low_array[item.node],resources.depth_array[next_node]);
 					}
 				}
 			}
 			else {
-				// Ok we walked upwards
-				if(parent_array[node_before] == item) {
-					std.debug.print("\nCurrent {} is parent of {}\n",.{item,node_before});
-					if(low_array[node_before] >= depth_array[item] and item != root_node) {
-						aritculation_points.set(item);
+				if(item.recurse_update and resources.parent_array[item.parent] == item.node) {
+					// parent are child are swapped and this is after the depth first recursion
+					resources.low_array[item.node] = std.math.min(resources.low_array[item.node],resources.low_array[item.parent]);
+
+					// Calculate the nodes in the dfs tree below us
+					if(resources.parent_array[item.parent] == item.node) {
+						resources.node_count[item.node] += resources.node_count[item.parent];
 					}
-					low_array[item] = std.math.min(low_array[item],low_array[node_before]);
+					// Propagate upwards
+					if(resources.parent_array[item.node] != item.node and resources.low_array[item.parent] >= resources.depth_array[item.node]) {
+						resources.articulation_points.set(item.node);
+					}
+				}
+				else if (item.node != resources.parent_array[item.parent]){
+					resources.low_array[item.parent] = std.math.min(resources.low_array[item.parent],resources.depth_array[item.node]);
 				}
 			}
-			node_before = item;
 		}
 		if(root_children > 1) {
-			aritculation_points.set(root_node);
-		}
-
-		var articulationsp = aritculation_points.iter();
-		while(articulationsp.next()) |item| {
-			std.debug.print("Articulation point {}\n",.{item});
+			resources.articulation_points.set(root_node);
 		}
 }
 
 
-test "Check articulation points" {
+test "Check articulation points I" {
 	var allocator = std.heap.GeneralPurposeAllocator(.{}){};
 	var graph = try Graph(u8).new(5,allocator.allocator());
 	try graph.addEdge(0,1);
@@ -168,5 +175,51 @@ test "Check articulation points" {
 	try graph.addEdge(0,3);
 	try graph.addEdge(3,4);
 
-	try findArticulationPoints(u8,0,&graph,&graph.scratch_bitset);
+	var res = try solver.ArticulationPointResources(u8).init(&graph);
+
+
+	try findArticulationPoints(u8,0,&graph,&graph.scratch_bitset, &res);
+
+	var iter = res.articulation_points.iter();
+	try std.testing.expectEqual(iter.next().?,0);
+	try std.testing.expectEqual(iter.next().?,3);
+	try std.testing.expectEqual(iter.next(),null);
+}
+
+test "Check articulation points II" {
+	var allocator = std.heap.GeneralPurposeAllocator(.{}){};
+	var graph = try Graph(u8).new(4,allocator.allocator());
+	try graph.addEdge(0,1);
+	try graph.addEdge(1,2);
+	try graph.addEdge(2,3);
+
+	var res = try solver.ArticulationPointResources(u8).init(&graph);
+	try findArticulationPoints(u8,0,&graph,&graph.scratch_bitset,&res);
+
+	var iter = res.articulation_points.iter();
+	try std.testing.expectEqual(iter.next().?,1);
+	try std.testing.expectEqual(iter.next().?,2);
+	try std.testing.expectEqual(iter.next(),null);
+}
+
+test "Check articulation points III" {
+	var allocator = std.heap.GeneralPurposeAllocator(.{}){};
+	var graph = try Graph(u8).new(7,allocator.allocator());
+	try graph.addEdge(0,1);
+	try graph.addEdge(1,2);
+	try graph.addEdge(2,0);
+
+	try graph.addEdge(1,3);
+	try graph.addEdge(1,4);
+	try graph.addEdge(1,6);
+
+	try graph.addEdge(3,5);
+	try graph.addEdge(4,5);
+	var res = try solver.ArticulationPointResources(u8).init(&graph);
+
+	try findArticulationPoints(u8,0,&graph,&graph.scratch_bitset, &res);
+
+	var iter = res.articulation_points.iter();
+	try std.testing.expectEqual(iter.next().?,1);
+	try std.testing.expectEqual(iter.next(),null);
 }

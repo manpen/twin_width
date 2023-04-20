@@ -1,266 +1,282 @@
 const std = @import("std");
+const comptime_util = @import("../util/comptime_checks.zig");
 
-pub const NewRedEdge = packed struct {
-	target: u31,
-	turned_or_overwrite: bool,
-	pub inline fn new(target: u32) NewRedEdge {
-		return NewRedEdge {
-			.target = @intCast(u31,target),
-			.turned_or_overwrite = false
-		};
-	}
-	pub inline fn newOverwritten(target: u32) NewRedEdge {
-		return NewRedEdge {
-			.target = @intCast(u31,target),
-			.turned_or_overwrite = true 
-		};
-	}
-};
+pub fn NewRedEdgeType(comptime T: type) type {
+    return enum(T) {
+				// Converted own black edge to red edge due to last merge
+        black_to_red_own,
+				// Converted erased black edge to red edge due to last merge
+				black_to_red_other,
+				// Deleted a black edge from the surviving node since the erased node had the black edge too
+        black_to_deleted,
+				// Deleted a red edge from the surviving node since the erased node had the red edge too
+				red_to_deleted,
+    };
+}
 
+pub fn NewRedEdge(comptime T: type) type {
+    comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
+        @compileError("Type must either be u8,16 or u32");
+    };
 
-pub const RedEdgeStackError = error {
-	StackNotSealed,
-	StackNoLevelLeft,
-	StackOverflow
-};
+    // This structure only stores turned red edges meaning red edges which were created due to the merge with the erased node together with the erased node and this information we can piece together from who came which edge at which time
+    // new red edges
+    // what edge turned (black -> red)
+    // override (black -> deleted)
+    return struct {
+				const Self = @This();
+        target: T,
+        edge_type: NewRedEdgeType(T),
+				
+				pub inline fn blackToRedOwn(target: T) Self {
+					return Self {
+						.target = target,
+						.edge_type = .black_to_red_own,
+					};
+				}
 
-pub const RedEdgeStack = struct {
-	const Self = @This();
-	edge_stack: std.ArrayListUnmanaged(NewRedEdge),
-	size: std.ArrayListUnmanaged(u32),
-	allocator: std.mem.Allocator,
-	pub fn init(allocator: std.mem.Allocator) !RedEdgeStack {
-		var size = std.ArrayListUnmanaged(u32){};
-		try size.append(allocator,0);
+				pub inline fn blackToRedOther(target: T) Self {
+					return Self {
+						.target = target,
+						.edge_type = .black_to_red_other,
+					};
+				}
 
-		return RedEdgeStack {
-			.edge_stack = std.ArrayListUnmanaged(NewRedEdge){},
-			.size = size,
-			.allocator = allocator
-		};
-	}
+				pub inline fn blackToDeleted(target: T) Self {
+					return Self {
+						.target = target,
+						.edge_type = .black_to_deleted,
+					};
+				}
 
-	pub fn initCapacity(allocator: std.mem.Allocator, capacity: u32) !RedEdgeStack {
-		std.debug.assert(capacity>0);
-		var size = std.ArrayListUnmanaged(u32){};
-		try size.append(allocator,0);
+				pub inline fn redToDeleted(target: T) Self {
+					return Self {
+						.target = target,
+						.edge_type = .red_to_deleted,
+					};
+				}
+    };
+}
 
-		return RedEdgeStack {
-			.edge_stack = try std.ArrayListUnmanaged(NewRedEdge).initCapacity(allocator,capacity),
-			.size = size,
-			.allocator = allocator
-		};
-	}
+pub const RedEdgeStackError = error{ StackNotSealed, StackNoLevelLeft, StackOverflow };
 
-	pub fn deinit(self: *Self) void {
-		self.edge_stack.deinit(self.allocator);
-		self.size.deinit(self.allocator);
-	}
+pub fn RedEdgeStack(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        edge_stack: std.ArrayListUnmanaged(NewRedEdge(T)),
+        size: std.ArrayListUnmanaged(u32),
 
-	pub const RedEdgeStackIterator = struct {
-		index: u32,
-		length: u32,
-		stack: *const RedEdgeStack,
-		pub inline fn next(self: *RedEdgeStackIterator) ?NewRedEdge {
-			if(self.index >= self.length) {
-				return null;
-			}
+        pub fn init(allocator: std.mem.Allocator) !Self {
+            var size = std.ArrayListUnmanaged(u32){};
+            try size.append(allocator, 0);
 
-			const item = self.stack.edge_stack.items[self.index];
-			self.index+=1;
-			return item;
-		}
+            return Self { .edge_stack = std.ArrayListUnmanaged(NewRedEdge(T)){}, .size = size};
+        }
 
-	};
+        pub fn initCapacity(allocator: std.mem.Allocator, capacity: u32) !Self {
+            std.debug.assert(capacity > 0);
+            var size = std.ArrayListUnmanaged(u32){};
+            try size.append(allocator, 0);
 
-	pub fn iterateLastLevel(self: *const Self) RedEdgeStackError!RedEdgeStackIterator {
-		if(self.size.items[self.size.items.len-1] != self.edge_stack.items.len) {
-			return RedEdgeStackError.StackNotSealed;
-		}
-		else if(self.size.items.len < 2) {
-			return RedEdgeStackError.StackNoLevelLeft;
-		}
-		return RedEdgeStackIterator {
-			.index = self.size.items[self.size.items.len-2],
-			.length = @intCast(u32,self.edge_stack.items.len),
-			.stack = self
-		};
-	}
+            return Self { .edge_stack = try std.ArrayListUnmanaged(NewRedEdge(T)).initCapacity(allocator, capacity), .size = size };
+        }
 
-	pub fn revertLastContraction(self: *Self) RedEdgeStackError!void {
-		if(self.size.items.len >= 2) {
-			// Reset to start of this level
-			_ = self.size.pop();
-			const resize = self.size.items[self.size.items.len-1];
-			self.edge_stack.shrinkRetainingCapacity(resize);
-		}
-		else {
-			return RedEdgeStackError.StackNoLevelLeft;
-		}
-	}
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            self.edge_stack.deinit(allocator);
+            self.size.deinit(allocator);
+        }
 
+        pub const RedEdgeStackIterator = struct {
+            index: u32,
+            stack: *const Self,
+            pub inline fn next(self: *RedEdgeStackIterator) ?NewRedEdge(T) {
+                if (self.index >= self.stack.edge_stack.items.len) {
+                    return null;
+                }
 
-	//TODO: Add exception here!
-	pub fn addEdge(self: *Self, edge: NewRedEdge) !void {
-		try self.edge_stack.append(self.allocator,edge);
-	}
+                const item = self.stack.edge_stack.items[self.index];
+                self.index += 1;
+                return item;
+            }
+        };
 
-	pub fn sealLevel(self: *Self) !void {
-		try self.size.append(self.allocator,@intCast(u32,self.edge_stack.items.len));
-	}
-};
+        pub fn iterateLastLevel(self: *const Self) RedEdgeStackError!RedEdgeStackIterator {
+            if (self.size.items[self.size.items.len - 1] != self.edge_stack.items.len) {
+                return RedEdgeStackError.StackNotSealed;
+            } else if (self.size.items.len < 2) {
+                return RedEdgeStackError.StackNoLevelLeft;
+            }
+            return RedEdgeStackIterator{ .index = self.size.items[self.size.items.len - 2], .stack = self };
+        }
 
+        pub fn revertLastContraction(self: *Self) RedEdgeStackError!void {
+            if (self.size.items.len >= 2) {
+                // Reset to start of this level
+                _ = self.size.pop();
+                const resize = self.size.items[self.size.items.len - 1];
+                self.edge_stack.shrinkRetainingCapacity(resize);
+            } else {
+                return RedEdgeStackError.StackNoLevelLeft;
+            }
+        }
+
+        //TODO: Add exception here!
+        pub inline fn addEdge(self: *Self, allocator: std.mem.Allocator, edge: NewRedEdge(T)) !void {
+            try self.edge_stack.append(allocator, edge);
+        }
+
+        pub inline fn sealLevel(self: *Self, allocator: std.mem.Allocator) !void {
+            try self.size.append(allocator, @intCast(u32,self.edge_stack.items.len));
+        }
+    };
+}
 
 test "RedEdgeStack: New red edges" {
-	{
-		const edge = NewRedEdge.new(100);
-		try std.testing.expectEqual(edge.target,100);
-		try std.testing.expectEqual(edge.turned_or_overwrite, false);
-	}
+    {
+        const edge = NewRedEdge(u16).blackToRedOwn(100);
+        try std.testing.expectEqual(edge.target, 100);
+        try std.testing.expectEqual(edge.edge_type, .black_to_red_own);
+    }
 
-
-	{
-		const edge = NewRedEdge.newOverwritten(102);
-		try std.testing.expectEqual(edge.target,102);
-		try std.testing.expectEqual(edge.turned_or_overwrite, true);
-	}
+    {
+        const edge = NewRedEdge(u16).blackToDeleted(102);
+        try std.testing.expectEqual(edge.target, 102);
+        try std.testing.expectEqual(edge.edge_type, .black_to_deleted);
+    }
 }
 
-test "RedEdgeStack: Red edge stack add and iterate" {	
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	defer {
-		std.debug.assert(!gpa.deinit());
-	}
-	var stack = try RedEdgeStack.init(gpa.allocator());
-	defer stack.deinit();
+test "RedEdgeStack: Red edge stack add and iterate" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        std.debug.assert(!gpa.deinit());
+    }
+    var stack = try RedEdgeStack(u16).init(gpa.allocator());
+    defer stack.deinit(gpa.allocator());
 
-	stack.addEdge(NewRedEdge.new(1)) catch unreachable;
-	stack.addEdge(NewRedEdge.newOverwritten(2)) catch unreachable;
-	try stack.sealLevel();
-	stack.addEdge(NewRedEdge.new(3)) catch unreachable;
-	stack.addEdge(NewRedEdge.newOverwritten(4)) catch unreachable;
-	try stack.sealLevel();
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToRedOwn(1)) catch unreachable;
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(2)) catch unreachable;
+    try stack.sealLevel(gpa.allocator());
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToRedOwn(3)) catch unreachable;
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(4)) catch unreachable;
+    try stack.sealLevel(gpa.allocator());
 
-	var iter = stack.iterateLastLevel() catch unreachable;
-	var next = iter.next().?;
-	var next_2 = iter.next().?;
+    var iter = stack.iterateLastLevel() catch unreachable;
+    var next = iter.next().?;
+    var next_2 = iter.next().?;
 
-	try std.testing.expectEqual(next.target, 3);
-	try std.testing.expectEqual(next.turned_or_overwrite, false);
+    try std.testing.expectEqual(next.target, 3);
+    try std.testing.expectEqual(next.edge_type, .black_to_red_own);
 
-	try std.testing.expectEqual(next_2.target, 4);
-	try std.testing.expectEqual(next_2.turned_or_overwrite, true);
+    try std.testing.expectEqual(next_2.target, 4);
+    try std.testing.expectEqual(next_2.edge_type, .black_to_deleted);
 
-	try stack.revertLastContraction();
+    try stack.revertLastContraction();
 
-	var iter_level_2 = stack.iterateLastLevel() catch unreachable;
-	var next_level2 = iter_level_2.next().?;
-	var next_level2_2 = iter_level_2.next().?;
+    var iter_level_2 = stack.iterateLastLevel() catch unreachable;
+    var next_level2 = iter_level_2.next().?;
+    var next_level2_2 = iter_level_2.next().?;
 
-	try std.testing.expectEqual(next_level2.target, 1);
-	try std.testing.expectEqual(next_level2.turned_or_overwrite, false);
+    try std.testing.expectEqual(next_level2.target, 1);
+    try std.testing.expectEqual(next_level2.edge_type, .black_to_red_own);
 
-	try std.testing.expectEqual(next_level2_2.target, 2);
-	try std.testing.expectEqual(next_level2_2.turned_or_overwrite, true);
+    try std.testing.expectEqual(next_level2_2.target, 2);
+    try std.testing.expectEqual(next_level2_2.edge_type, .black_to_deleted);
 
+    try stack.revertLastContraction();
 
-	try stack.revertLastContraction();
-
-	// Nothing left to iterate
-	try std.testing.expectError(error.StackNoLevelLeft,stack.iterateLastLevel());
+    // Nothing left to iterate
+    try std.testing.expectError(error.StackNoLevelLeft, stack.iterateLastLevel());
 }
 
-test "RedEdgeStack: Red edge stack add and empty stack" {	
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	defer {
-		std.debug.assert(!gpa.deinit());
-	}
-	var stack = try RedEdgeStack.init(gpa.allocator());
-	defer stack.deinit();
-	stack.addEdge(NewRedEdge.new(1)) catch unreachable;
+test "RedEdgeStack: Red edge stack add and empty stack" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        std.debug.assert(!gpa.deinit());
+    }
+    var stack = try RedEdgeStack(u16).init(gpa.allocator());
+    defer stack.deinit(gpa.allocator());
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(1)) catch unreachable;
 
-	try stack.sealLevel();
-	try stack.sealLevel();
+    try stack.sealLevel(gpa.allocator());
+    try stack.sealLevel(gpa.allocator());
 
-	var iterator = try stack.iterateLastLevel();
-	try std.testing.expectEqual(iterator.next(),null);
+    var iterator = try stack.iterateLastLevel();
+    try std.testing.expectEqual(iterator.next(), null);
 
-	try stack.revertLastContraction();
-	var iterator_now = try stack.iterateLastLevel();
-	const item = iterator_now.next().?;
-	try std.testing.expectEqual(item.target, 1);
-	try std.testing.expectEqual(item.turned_or_overwrite, false);
-	try std.testing.expectEqual(iterator_now.next(),null);
+    try stack.revertLastContraction();
+    var iterator_now = try stack.iterateLastLevel();
+    const item = iterator_now.next().?;
+    try std.testing.expectEqual(item.target, 1);
+    try std.testing.expectEqual(item.edge_type, .black_to_deleted);
+    try std.testing.expectEqual(iterator_now.next(), null);
 }
 
+test "RedEdgeStack: Red edge stack revert and add again" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        std.debug.assert(!gpa.deinit());
+    }
+    var stack = try RedEdgeStack(u16).init(gpa.allocator());
+    defer stack.deinit(gpa.allocator());
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(1)) catch unreachable;
 
-test "RedEdgeStack: Red edge stack revert and add again" {	
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	defer {
-		std.debug.assert(!gpa.deinit());
-	}
-	var stack = try RedEdgeStack.init(gpa.allocator());
-	defer stack.deinit();
-	stack.addEdge(NewRedEdge.new(1)) catch unreachable;
+    try stack.sealLevel(gpa.allocator());
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(2)) catch unreachable;
+    try stack.sealLevel(gpa.allocator());
 
-	try stack.sealLevel();
-	stack.addEdge(NewRedEdge.new(2)) catch unreachable;
-	try stack.sealLevel();
+    {
+        var iterator = try stack.iterateLastLevel();
+        const item_now = iterator.next().?;
+        try std.testing.expectEqual(item_now.target, 2);
+        try std.testing.expectEqual(item_now.edge_type, .black_to_deleted);
+        try std.testing.expectEqual(iterator.next(), null);
+    }
 
-	{
-		var iterator = try stack.iterateLastLevel();
-		const item_now = iterator.next().?;
-		try std.testing.expectEqual(item_now.target,2);
-		try std.testing.expectEqual(item_now.turned_or_overwrite,false);
-		try std.testing.expectEqual(iterator.next(),null);
-	}
+    try stack.revertLastContraction();
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToRedOwn(3)) catch unreachable;
+    try stack.sealLevel(gpa.allocator());
 
-	try stack.revertLastContraction();
-	stack.addEdge(NewRedEdge.newOverwritten(3)) catch unreachable;
-	try stack.sealLevel();
+    {
+        var iterator = try stack.iterateLastLevel();
+        const item_now = iterator.next().?;
+        try std.testing.expectEqual(item_now.target, 3);
+        try std.testing.expectEqual(item_now.edge_type, .black_to_red_own);
 
-	{
-		var iterator = try stack.iterateLastLevel();
-		const item_now = iterator.next().?;
-		try std.testing.expectEqual(item_now.target,3);
-		try std.testing.expectEqual(item_now.turned_or_overwrite,true);
-
-		//Next item must be null
-		try std.testing.expectEqual(iterator.next(),null);
-
-	}
-	try stack.revertLastContraction();
-	{
-		var iterator = try stack.iterateLastLevel();
-		const item_now = iterator.next().?;
-		try std.testing.expectEqual(item_now.target,1);
-		try std.testing.expectEqual(item_now.turned_or_overwrite,false);
-		try std.testing.expectEqual(iterator.next(),null);
-	}
-	try stack.revertLastContraction();
-	try std.testing.expectError(error.StackNoLevelLeft,stack.iterateLastLevel());
-	try std.testing.expectError(error.StackNoLevelLeft,stack.revertLastContraction());
+        //Next item must be null
+        try std.testing.expectEqual(iterator.next(), null);
+    }
+    try stack.revertLastContraction();
+    {
+        var iterator = try stack.iterateLastLevel();
+        const item_now = iterator.next().?;
+        try std.testing.expectEqual(item_now.target, 1);
+        try std.testing.expectEqual(item_now.edge_type, .black_to_deleted);
+        try std.testing.expectEqual(iterator.next(), null);
+    }
+    try stack.revertLastContraction();
+    try std.testing.expectError(error.StackNoLevelLeft, stack.iterateLastLevel());
+    try std.testing.expectError(error.StackNoLevelLeft, stack.revertLastContraction());
 }
 
-test "RedEdgeStack: Red edge stack check safety guards" {	
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	defer {
-		std.debug.assert(!gpa.deinit());
-	}
-	var stack = try RedEdgeStack.init(gpa.allocator());
-	defer stack.deinit();
-	stack.addEdge(NewRedEdge.new(1)) catch unreachable;
-	try std.testing.expectError(error.StackNotSealed,stack.iterateLastLevel());
+test "RedEdgeStack: Red edge stack check safety guards" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        std.debug.assert(!gpa.deinit());
+    }
+    var stack = try RedEdgeStack(u16).init(gpa.allocator());
+    defer stack.deinit(gpa.allocator());
+    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToRedOwn(1)) catch unreachable;
+    try std.testing.expectError(error.StackNotSealed, stack.iterateLastLevel());
 }
 
-test "RedEdgeStack: Check capacity" {	
-	// Space for 3 items 
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	defer {
-		std.debug.assert(!gpa.deinit());
-	}
-	var stack = try RedEdgeStack.initCapacity(gpa.allocator(),100);
-	defer stack.deinit();
+test "RedEdgeStack: Check capacity" {
+    // Space for 3 items
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        std.debug.assert(!gpa.deinit());
+    }
+    var stack = try RedEdgeStack(u16).initCapacity(gpa.allocator(), 100);
+    defer stack.deinit(gpa.allocator());
 
-	try std.testing.expectEqual(stack.edge_stack.capacity, 100);
+    try std.testing.expectEqual(stack.edge_stack.capacity, 100);
 }

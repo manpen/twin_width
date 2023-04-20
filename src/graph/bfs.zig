@@ -165,12 +165,19 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
 		scorer.setNextTargetDegree(graph.node_list[start_node].cardinality());
 
 		var iter_current = stack.iterator();
-		var current_level:u32 = 0;
+		if(graph.node_list[start_node].cardinality() > 10000 and !graph.node_list[start_node].isLargeNode()) {
+			graph.node_list[start_node].promoteToLargeDegreeNode(graph) catch unreachable;
+		}
+		var root_large = graph.node_list[start_node].isLargeNode();
 
-		while (current_level < options.max_level) {
+		for(0..(options.max_level-1)) |_| {
 			while (iter_current.next()) |id| {
-				if (graph.node_list[id].isLargeNode()) {
-					var iter_large = graph.node_list[id].takeIterator(30);
+				if(graph.node_list[id].cardinality() > 10000 and !graph.node_list[id].isLargeNode()) {
+					graph.node_list[id].promoteToLargeDegreeNode(graph) catch unreachable;
+				}
+				if (!root_large and graph.node_list[id].isLargeNode()) {
+					// Was 30 before
+					var iter_large = graph.node_list[id].takeIterator(40);
 					while (iter_large.next()) |item| {
 						const total_deg = graph.node_list[item].cardinality();
 						if (!visited.setExists(item)) {
@@ -203,7 +210,6 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
 				}
 			}
 
-			current_level+=1;
 			if (stack.nextFrontierSize() == 0) {
 				return;
 			}
@@ -211,8 +217,26 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
 			iter_current = stack.iterator();
 		}
 		while (iter_current.next()) |id| {
-			const total_deg = graph.node_list[id].black_edges.cardinality()+graph.node_list[id].red_edges.cardinality();
-			scorer.addVisit(id,total_deg);
+			if (!root_large and graph.node_list[id].isLargeNode()) {
+				var iter_large = graph.node_list[id].takeIterator(40);
+				while (iter_large.next()) |item| {
+					scorer.addVisit(item,graph.node_list[item].cardinality());
+				}
+			}
+			else {
+				if (options.kind == .black or options.kind == .both) {
+					var black_iter = graph.node_list[id].black_edges.iterator();
+					while (black_iter.next()) |item| {
+						scorer.addVisit(item,graph.node_list[item].cardinality());
+					}
+				}
+				if (options.kind == .red or options.kind == .both) {
+					var red_iter = graph.node_list[id].red_edges.iterator();
+					while (red_iter.next()) |item| {
+						scorer.addVisit(item,graph.node_list[item].cardinality());
+					}
+				}
+			}
 		}
 }
 

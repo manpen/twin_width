@@ -65,6 +65,7 @@ pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, c
 				.array => return self.array.contains(item),
 			}
 		}
+
 		pub inline fn remove(self: *StorageRepresentation, item: T) bool {
 			switch(self.*) {
 				.bitset => return self.bitset.unset(item),
@@ -76,6 +77,13 @@ pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, c
 			switch(self.*) {
 				.bitset => return @intCast(T,self.bitset.cardinality),
 					.array => return @intCast(T,self.array.cardinality()),
+			}
+		}
+
+		pub inline fn removeMask(self: *StorageRepresentation, mask: *two_level_bitset.FastBitSet) void {
+			switch(self.*) {
+				.bitset => self.bitset.removeMask(mask),
+				.array => self.array.removeMask(mask),
 			}
 		}
 		};
@@ -258,6 +266,10 @@ pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, c
 			}
 			return false;
 		}
+
+		pub inline fn removeMask(self: *Self, mask: *two_level_bitset.FastBitSet) void {
+			self.storage.removeMask(mask);
+		}
 	};
 }
 
@@ -324,7 +336,6 @@ test "CompressedBitmap: Check large" {
 		}
 	}
 	try std.testing.expectEqual(empty.cardinality(),19);
-	std.debug.print("Bytes {}\n",.{gpa.total_requested_bytes});
 }
 
 test "CompressedBitmap: Check large iterator" {
@@ -349,7 +360,6 @@ test "CompressedBitmap: Check large iterator" {
 	}
 
 	try std.testing.expectEqual(empty.cardinality(),10);
-	std.debug.print("Bytes {}\n",.{gpa.total_requested_bytes});
 }
 
 pub inline fn checkInline(ctx: *u64, result: u32) void {

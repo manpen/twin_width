@@ -16,7 +16,6 @@ const builtin = @import("builtin");
 
 
 pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, filename: []const u8, short_name: []const u8) !void {
-
 	var timer = try std.time.Instant.now();
 	var pace_part = try pace.Pace2023Fmt(T).fromFile(allocator,filename);
 	var loaded_graph = graph.Graph(T).loadFromPace(allocator,&pace_part) catch |err| {
@@ -116,8 +115,17 @@ pub fn main() !void {
 		//fixed_alloc.reset();
 		//try initial_solver("instances/heuristic-public/heuristic_156.gr","heuristic_156.gr",&fixed_alloc);
 		//fixed_alloc.reset();
-		//try initial_solver("instances/heuristic-public/heuristic_186.gr","heuristic_186.gr",&fixed_alloc);
-		//fixed_alloc.reset();
+
+		// TAKES AGES!
+		// Update: Not anymore
+		//try initial_solver(hpa,"instances/heuristic-public/heuristic_162.gr","heuristic_162.gr");
+		//hpa_allocator.reset();
+		
+		//try initial_solver(hpa,"instances/heuristic-public/heuristic_192.gr","heuristic_192.gr");
+		//hpa_allocator.reset();
+
+		//try initial_solver(hpa,"instances/heuristic-public/heuristic_122.gr","heuristic_122.gr");
+		//hpa_allocator.reset();
 
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);
 		while(try dirit.next()) |item| {
@@ -137,6 +145,7 @@ pub fn main() !void {
 			try initial_solver(hpa,complete_name,name);
 			hpa_allocator.reset();
 		}
+
 
 		for(file_list.items) |name| {
 			allocator.free(name);

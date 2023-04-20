@@ -66,9 +66,9 @@ pub const FastBitSet = struct {
 		pub inline fn initEmpty(size: u32, allocator: std.mem.Allocator) !Self {
 			var ensure_aligned = (size>>6)+1;
 			var ensure_higher = (ensure_aligned>>6)+1;
-			var storage = try allocator.alignedAlloc(u64,32,ensure_aligned);
+			var storage = try allocator.alloc(u64,ensure_aligned);
 			errdefer allocator.free(storage);
-			var storage_higher = try allocator.alignedAlloc(u64,32,ensure_higher);
+			var storage_higher = try allocator.alloc(u64,ensure_higher);
 			errdefer allocator.free(storage_higher);
 			std.mem.set(u64,storage,0);
 			std.mem.set(u64,storage_higher,0);
@@ -79,6 +79,30 @@ pub const FastBitSet = struct {
 				.cardinality = 0,
 				.total_len = size
 			};
+		}
+
+		pub inline fn initFull(size: u32, allocator: std.mem.Allocator) !Self {
+			var ensure_aligned = (size>>6)+1;
+			var ensure_higher = (ensure_aligned>>6)+1;
+			var storage = try allocator.alloc(u64,ensure_aligned);
+			errdefer allocator.free(storage);
+			var storage_higher = try allocator.alloc(u64,ensure_higher);
+			errdefer allocator.free(storage_higher);
+			std.mem.set(u64,storage,0xFFFFFFFFFFFFFFFF);
+			std.mem.set(u64,storage_higher,0xFFFFFFFFFFFFFFFF);
+
+			return Self {
+				.storage = storage,
+				.storage_higher = storage_higher,
+				.cardinality = size,
+				.total_len = size
+			};
+		}
+
+		pub inline fn copyIntoSelf(self: *Self, other: *Self) void {
+			std.mem.copy(u64,self.storage,other.storage);
+			std.mem.copy(u64,self.storage_higher,other.storage_higher);
+			self.cardinality = other.cardinality;
 		}
 
 		pub inline fn copy(self: *const Self, allocator: std.mem.Allocator) !Self {
@@ -103,6 +127,13 @@ pub const FastBitSet = struct {
 		pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 			allocator.free(self.storage_higher);
 			allocator.free(self.storage);
+		}
+
+		pub inline fn removeMask(self: *Self, bset: *Self) void {
+				var iter_set = bset.iter();
+				while(iter_set.next()) |index| {
+					_ = self.unset(index);
+				}
 		}
 
 		pub inline fn iter(self: *const Self) FastBitSetIterator {

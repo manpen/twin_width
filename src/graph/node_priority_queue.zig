@@ -34,6 +34,18 @@ pub fn NodePriorityQueue(comptime T: type) type {
             self.postpone_set.deinit(self.graph.allocator);
         }
 
+				pub inline fn checkSmallest(self: *Self, node: T) bool {
+					if(self.priority_queue.peek()) |item| {
+
+            const prio_new = NodePriority{ .red_degree = self.graph.node_list[node].red_edges.cardinality(), .black_degree = self.graph.node_list[node].black_edges.cardinality(), .id = node };
+
+						if(NodePriority.compareFn({},prio_new,item) == std.math.Order.lt) {
+							return true;
+						}
+					}
+					return false;
+				}
+
         pub inline fn add(self: *Self, node: T) !void {
             if (self.graph.erased_nodes.get(node)) {
                 return;
@@ -47,7 +59,7 @@ pub fn NodePriorityQueue(comptime T: type) type {
 
         pub inline fn shouldPostpone(self: *Self, current_tww: T, induced_tww: T) bool {
             _ = self;
-            return induced_tww > current_tww and (induced_tww * 4) > (current_tww * 5);
+            return induced_tww > current_tww and (induced_tww * 5) > (current_tww * 6);
         }
 
         pub inline fn postpone(self: *Self, node: T, by: T) !bool {
@@ -123,8 +135,12 @@ pub fn NodePriorityQueue(comptime T: type) type {
             id: T,
             pub fn compareFn(ctx: void, lhs: NodePriority, rhs: NodePriority) std.math.Order {
                 _ = ctx;
+								//Sort leafes to the end
+								if(lhs.red_degree+lhs.black_degree == 1 or rhs.red_degree+rhs.red_degree == 1) {
+									return std.math.order(rhs.black_degree+rhs.red_degree,lhs.red_degree+lhs.black_degree);
+								}
                 if (lhs.red_degree == rhs.red_degree) {
-                    return std.math.order(lhs.black_degree, rhs.red_degree);
+                    return std.math.order(lhs.black_degree, rhs.black_degree);
                 }
                 return std.math.order(lhs.red_degree, rhs.red_degree);
             }

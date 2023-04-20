@@ -19,7 +19,7 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
 		std.debug.print("Error {}\n",.{err});
 		return err;
 	};
-	try loaded_graph.contraction.seq.writeSolutionToStdout();
+	try loaded_graph.contraction.writeSolutionToStdout();
 }
 
 pub fn main() !void {

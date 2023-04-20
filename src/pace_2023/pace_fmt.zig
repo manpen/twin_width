@@ -149,7 +149,7 @@ pub fn Pace2023Fmt(comptime T: type) type {
         pub fn fromStdin(allocator: std.mem.Allocator, problem: PaceProblem2023) !Self {
 						var file = std.io.getStdIn();
 						var unbuffered_line_splitter = file.reader();
-						var buffered_reader = std.io.BufferedReader(16384,@TypeOf(unbuffered_line_splitter)) {
+						var buffered_reader = std.io.BufferedReader(32768,@TypeOf(unbuffered_line_splitter)) {
 							.unbuffered_reader = unbuffered_line_splitter
 						};
 						var line_splitter = buffered_reader.reader();

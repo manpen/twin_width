@@ -24,7 +24,6 @@ pub fn LargeNodeQueryProcessor(comptime T: type) type {
 		lowest_degree_nodes: std.PriorityQueue(NodeDegreeEntry,void, Self.compareFunction),
 		added_nodes: std.bit_set.DynamicBitSetUnmanaged,
 		graph: *const Graph(T),
-
 		pub fn compareFunction(ctx: void, lhs: NodeDegreeEntry, rhs: NodeDegreeEntry) std.math.Order {
 			_ = ctx;
 			return std.math.order(lhs.degree,rhs.degree);
@@ -61,15 +60,17 @@ pub fn LargeNodeQueryProcessor(comptime T: type) type {
 						return null;
 					}
 					const item = self.ptr.lowest_degree_nodes.items[self.index];
-					self.index+=1;
 					if(self.ptr.graph.erased_nodes.get(item.id)) {
+						_ = self.ptr.lowest_degree_nodes.removeIndex(self.index);
 						continue;
 					}
 					else if(self.ptr.graph.node_list[item.id].cardinality() != item.degree) {
 						var updated_item = self.ptr.lowest_degree_nodes.removeIndex(self.index);
+						self.ptr.added_nodes.unset(updated_item.id);
 						self.ptr.addNode(updated_item.id) catch unreachable;
 						continue;
 					}
+					self.index+=1;
 					self.items_left-=1;
 					return item.id;
 				}
@@ -99,12 +100,13 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
 		black_edges: compressed_bitmap.FastCompressedBitmap(T,promote_threshold,degrade_threshold),
 		red_edges: compressed_bitmap.FastCompressedBitmap(T,promote_threshold,degrade_threshold),
 		high_degree_node: ?*LargeNodeQueryProcessor(T),
+		num_leafes: T,
 
 		pub fn promoteToLargeDegreeNode(self: *Self, graph: *const Graph(T)) !void {
 			if(self.high_degree_node == null) {
 				var created = try graph.allocator.create(LargeNodeQueryProcessor(T));
 				created.* = try LargeNodeQueryProcessor(T).init(graph);
-				var iter = self.orderedIterator();
+				var iter = self.unorderedIterator();
 				while(iter.next()) |item| {
 					try created.addNode(item);
 				}
@@ -141,6 +143,13 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
 			try self.red_edges.add(allocator,node);
 		}
 
+		pub inline fn addBlackEdge(self: *Self, allocator: std.mem.Allocator, node: T) !void {
+			if(self.high_degree_node) |hd| {
+				try hd.addNode(node);
+			}
+			try self.black_edges.add(allocator,node);
+		}
+
 		pub inline fn removeBlackEdge(self: *Self, allocator: std.mem.Allocator, node: T) !void {
 			_ = try self.black_edges.remove(allocator, node);
 		}
@@ -151,6 +160,31 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
 
 		pub inline fn cardinality(self: *const Self) T {
 			return self.black_edges.cardinality() + self.red_edges.cardinality();
+		}
+
+		pub inline fn getFirstNeighboor(self: *const Self) T {
+			if(self.black_edges.cardinality() > 0) {
+				var iter = self.black_edges.iterator();
+				return iter.next().?;
+			}
+			else {
+				var iter = self.red_edges.iterator();
+				return iter.next().?;
+			}
+		}
+
+		pub inline fn isLeaf(self: *const Self) bool {
+			return self.cardinality() == 1;
+		}
+
+		pub inline fn unorderedIterator(self: *const Self) UnorderedNodeEdgeIterator {
+			var iterator_first = self.red_edges.iterator();
+			var iterator_second = self.black_edges.iterator();
+			return UnorderedNodeEdgeIterator {
+				.red_iter = iterator_first,
+				.black_iter = iterator_second,
+				.red = false
+			};
 		}
 
 		pub inline fn orderedIterator(self: *const Self) OrderedNodeEdgeIterator {
@@ -166,6 +200,22 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
 				.red = false
 			};
 		}
+
+		pub const UnorderedNodeEdgeIterator = struct {
+			red_iter: compressed_bitmap.FastCompressedBitmap(T,promote_threshold,degrade_threshold).FastCompressedBitmapIterator,
+			black_iter: compressed_bitmap.FastCompressedBitmap(T,promote_threshold,degrade_threshold).FastCompressedBitmapIterator,
+			red: bool,
+			pub inline fn next(self: *UnorderedNodeEdgeIterator) ?T {
+				while(self.black_iter.next()) |item| {
+					return item;
+				}
+				self.red = true;
+				while(self.red_iter.next()) |item| {
+					return item;
+				}
+				return null;
+			}
+		};
 
 		pub const OrderedNodeEdgeIterator = struct {
 			red_iter: compressed_bitmap.FastCompressedBitmap(T,promote_threshold,degrade_threshold).FastCompressedBitmapIterator,

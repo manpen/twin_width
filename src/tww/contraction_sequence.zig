@@ -120,7 +120,7 @@ pub fn ContractionSequence(comptime T: type) type {
 	
 	pub inline fn writeSolutionToStdout(self: *Self) !void {
 		var file = std.io.getStdOut();
-		var buffered = std.io.BufferedWriter(16384,@TypeOf(file.writer())){
+		var buffered = std.io.BufferedWriter(32768,@TypeOf(file.writer())){
 			.unbuffered_writer = file.writer()
 		};
 		var writer = buffered.writer();

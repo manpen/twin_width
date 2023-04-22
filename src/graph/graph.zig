@@ -161,16 +161,19 @@ pub fn Graph(comptime T: type) type {
         pub const InducedTwinWidthPotential = struct {
             tww: T,
             cumulative_red_edges: i64,
+						delta_red_edges: i32,
             pub inline fn default() InducedTwinWidthPotential {
                 return InducedTwinWidthPotential{
                     .tww = std.math.maxInt(T),
 										.cumulative_red_edges = std.math.maxInt(i64),
+										.delta_red_edges = std.math.maxInt(i32),
                 };
             }
 
             pub inline fn reset(self: *InducedTwinWidthPotential) void {
                 self.tww = std.math.maxInt(T);
                 self.cumulative_red_edges = std.math.maxInt(i64);
+								self.delta_red_edges = std.math.maxInt(i32);
             }
 
             pub inline fn isLess(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) bool {
@@ -182,7 +185,15 @@ pub fn Graph(comptime T: type) type {
 								}
 							}
 							else {
-								return self.cumulative_red_edges < other.cumulative_red_edges;
+								if(self.cumulative_red_edges < other.cumulative_red_edges) {
+									return true;
+								}
+								else if(self.cumulative_red_edges == other.cumulative_red_edges) {
+									return self.delta_red_edges > other.delta_red_edges;
+								}
+								else {
+									return false;
+								}
 							}
             }
         };
@@ -195,6 +206,8 @@ pub fn Graph(comptime T: type) type {
 						var red_potential:i64 = 0;
 
             var delta_red: T = 0;
+
+						var new_red_edges: i32 = 0;
 						var red_iter = self.node_list[erased].red_edges.iterator();
 
 						// Intuition is as following:
@@ -210,6 +223,7 @@ pub fn Graph(comptime T: type) type {
 							else {
 								// We destroyed a red edge update potential
 								red_potential -= self.node_list[item].red_edges.cardinality();
+								new_red_edges-=1;
 							}
 						}
 
@@ -226,20 +240,24 @@ pub fn Graph(comptime T: type) type {
                 if (black_iter.first) {
                     if (!self.node_list[survivor].red_edges.contains(item)) {
                         delta_red += 1;
+												new_red_edges+=1;
 												red_potential += self.node_list[item].red_edges.cardinality()+1;
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
                 // Came from survivor
                 else {
-                    delta_red += 1;
+									if(!self.node_list[erased].red_edges.contains(item)) {
+										delta_red += 1;
+										new_red_edges+=1;
 										red_potential += self.node_list[item].red_edges.cardinality()+1;
-                    tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
+										tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
+									}
                 }
             }
 
             tww = std.math.max(tww, delta_red);
-            return InducedTwinWidthPotential{ .tww = tww, .cumulative_red_edges = red_potential};
+            return InducedTwinWidthPotential{ .tww = tww, .cumulative_red_edges = red_potential, .delta_red_edges = new_red_edges};
         }
 
         pub const InducedTwinWidth = struct {

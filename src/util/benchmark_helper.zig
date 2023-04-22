@@ -40,8 +40,10 @@ test "BenchmarkHelper: Check start and end error" {
 
 	var count = 0;
 	bh.start();
+	try std.testing.expectError(bh.start(),BenchmarkError.TimerAlreadyStarted);
 	for(0..1000) |i| {
 		count+=i;	
 	}
 	bh.stop();
+	try std.testing.expectError(bh.stop(),BenchmarkError.TimerNotStarted);
 }

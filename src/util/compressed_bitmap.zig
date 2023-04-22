@@ -270,6 +270,13 @@ pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, c
 		pub inline fn removeMask(self: *Self, mask: *two_level_bitset.FastBitSet) void {
 			self.storage.removeMask(mask);
 		}
+
+		pub inline fn getKind(self: *const Self) CompressedBitmapBucketTag {
+			switch(self.storage) {
+				.bitset => return CompressedBitmapBucketTag.bitset,
+				.array => return CompressedBitmapBucketTag.array
+			}
+		}
 	};
 }
 
@@ -389,6 +396,26 @@ test "bench: CompressedBitmap: Check large iterator" {
 }
 
 test "bench: CompressedBitmap: Check large iterator inline" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{
+	}){};
+	defer std.debug.assert(!gpa.deinit());
+
+	var empty = FastCompressedBitmap(u32,200,100).init(10_000_000);
+	defer empty.deinit(gpa.allocator());	
+
+	var i:u32 = 0;
+	while(i<10_000_000) : (i+=100) {
+		try empty.add(gpa.allocator(),i);
+	}
+
+	var count:u64 = 0;
+	empty.forAll(*u64,checkInline,&count);
+
+	try std.testing.expectEqual(count,499995000000);
+}
+
+
+test "bench: CompressedBitmap: Check contains add small and clear" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{
 	}){};
 	defer std.debug.assert(!gpa.deinit());

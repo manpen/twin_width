@@ -89,6 +89,10 @@ pub fn NodePriorityQueue(comptime T: type) type {
             self.monotonic_tic_counter += 1;
         }
 
+        pub inline fn addTick(self: *Self, ticks: T) void {
+            self.monotonic_tic_counter += ticks;
+        }
+
         pub inline fn reconcilePostponed(self: *Self, current_tww: T) !void {
             while (self.postponed_queue.peek()) |item| {
                 if (item.priority < (self.monotonic_tic_counter + current_tww)) {

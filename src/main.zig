@@ -79,7 +79,7 @@ pub fn main() !void {
 		var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 		defer _ = gpa.deinit();
 
-		const target_directory = "instances/exact-public";
+		const target_directory = "instances/heuristic-public";
 
 		var allocator = gpa.allocator();
 		std.debug.print("{s:<25} | {s:>8} | {s:>8} | {s:>8} | {s:>6}\n",.{"filename","nodes","edges","tww","time (ms)"});
@@ -124,8 +124,6 @@ pub fn main() !void {
 		//try initial_solver(hpa,"instances/heuristic-public/heuristic_192.gr","heuristic_192.gr");
 		//hpa_allocator.reset();
 
-		//try initial_solver(hpa,"instances/heuristic-public/heuristic_122.gr","heuristic_122.gr");
-		//hpa_allocator.reset();
 
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);
 		while(try dirit.next()) |item| {

@@ -162,7 +162,7 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
     stack.swapFrontiers();
 
     visited.set(start_node);
-		scorer.setNextTargetDegree(graph.node_list[start_node].cardinality());
+		scorer.reset();
 
 		var iter_current = stack.iterator();
 		if(graph.node_list[start_node].cardinality() > 10000 and !graph.node_list[start_node].isLargeNode()) {
@@ -179,32 +179,32 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
 					// Was 30 before
 					var iter_large = graph.node_list[id].takeIterator(40);
 					while (iter_large.next()) |item| {
-						const total_deg = graph.node_list[item].cardinality();
 						if (!visited.setExists(item)) {
 							stack.addNext(@intCast(T, item));
+							scorer.addNewNode(item);
 						}
-						scorer.addVisit(item,total_deg);
+						scorer.addVisit(item);
 					}
 				}
 				else {
 					if (options.kind == .black or options.kind == .both) {
 						var black_iter = graph.node_list[id].black_edges.iterator();
 						while (black_iter.next()) |item| {
-							const total_deg = graph.node_list[item].cardinality();
 							if (!visited.setExists(item)) {
 								stack.addNext(@intCast(T, item));
+								scorer.addNewNode(item);
 							}
-							scorer.addVisit(item,total_deg);
+							scorer.addVisit(item);
 						}
 					}
 					if (options.kind == .red or options.kind == .both) {
 						var red_iter = graph.node_list[id].red_edges.iterator();
 						while (red_iter.next()) |item| {
-							const total_deg = graph.node_list[item].cardinality();
 							if (!visited.setExists(item)) {
 								stack.addNext(@intCast(T, item));
+								scorer.addNewNode(item);
 							}
-							scorer.addVisit(item,total_deg);
+							scorer.addVisit(item);
 						}
 					}
 				}
@@ -220,20 +220,29 @@ pub inline fn bfs_topk(comptime T: type, comptime K: u32, start_node: T, graph: 
 			if (!root_large and graph.node_list[id].isLargeNode()) {
 				var iter_large = graph.node_list[id].takeIterator(40);
 				while (iter_large.next()) |item| {
-					scorer.addVisit(item,graph.node_list[item].cardinality());
+					if (!visited.setExists(item)) {
+						scorer.addNewNode(item);
+					}
+					scorer.addVisit(item);
 				}
 			}
 			else {
 				if (options.kind == .black or options.kind == .both) {
 					var black_iter = graph.node_list[id].black_edges.iterator();
 					while (black_iter.next()) |item| {
-						scorer.addVisit(item,graph.node_list[item].cardinality());
+						if (!visited.setExists(item)) {
+							scorer.addNewNode(item);
+						}
+						scorer.addVisit(item);
 					}
 				}
 				if (options.kind == .red or options.kind == .both) {
 					var red_iter = graph.node_list[id].red_edges.iterator();
 					while (red_iter.next()) |item| {
-						scorer.addVisit(item,graph.node_list[item].cardinality());
+						if (!visited.setExists(item)) {
+							scorer.addNewNode(item);
+						}
+						scorer.addVisit(item);
 					}
 				}
 			}

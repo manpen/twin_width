@@ -48,7 +48,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 					try perf_bfs.stop();
 
 					try perf_calc.start();
-					var iterator = solver.scorer.iterator();
+					var iterator = try solver.scorer.iterator(self.graph);
 					var items_in_loop: u32 = 0;
 					while (iterator.next()) |item| {
 						if (item == first_node) continue;
@@ -358,6 +358,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 										}
 									}
 
+									std.debug.print("Time in bfs {} and in calculate tww {}\n",.{select_move_perf_bfs.total_time/(1000*1000),select_move_perf_calc.total_time/(1000*1000)});
 									return total_tww;
 								}
 							}

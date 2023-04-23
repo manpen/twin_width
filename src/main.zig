@@ -121,8 +121,8 @@ pub fn main() !void {
 		//try initial_solver(hpa,"instances/heuristic-public/heuristic_162.gr","heuristic_162.gr");
 		//hpa_allocator.reset();
 		
-		//try initial_solver(hpa,"instances/heuristic-public/heuristic_192.gr","heuristic_192.gr");
-		//hpa_allocator.reset();
+		try initial_solver(hpa,"instances/heuristic-public/heuristic_186.gr","heuristic_186.gr");
+		hpa_allocator.reset();
 
 
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);

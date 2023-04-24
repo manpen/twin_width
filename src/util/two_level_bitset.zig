@@ -167,11 +167,8 @@ pub const FastBitSet = struct {
 			const before = self.storage[new_index];
 			self.storage[new_index] |= @as(u64,1)<<overflow;
 			self.storage_higher[new_index_higher] |= @as(u64,1)<<overflow_higher;
-			if((before&@as(u64,1)<<overflow)==0) {
-				self.cardinality+=1;
-			}
+			self.cardinality += @boolToInt((before&@as(u64,1)<<overflow)==0);
 		}
-
 
 		pub inline fn setExists(self: *Self, index: u32) bool {
 			const overflow:u6 = @intCast(u6,index&0x3F);
@@ -181,11 +178,9 @@ pub const FastBitSet = struct {
 			const before = self.storage[new_index];
 			self.storage[new_index] |= @as(u64,1)<<overflow;
 			self.storage_higher[new_index_higher] |= @as(u64,1)<<overflow_higher;
-			if((before&@as(u64,1)<<overflow)==0) {
-				self.cardinality+=1;
-				return false;
-			}
-			return true;
+			const not_exists = (before&@as(u64,1)<<overflow)==0;
+			self.cardinality += @boolToInt(not_exists);
+			return !not_exists;
 		}
 
 		pub inline fn unset(self: *Self, index: u32) bool {
@@ -193,11 +188,9 @@ pub const FastBitSet = struct {
 			const new_index = index>>6;
 			const before = self.storage[new_index];
 			self.storage[new_index] &= ~(@as(u64,1)<<overflow);
-			if((before&(@as(u64,1)<<overflow))!=0) {
-				self.cardinality-=1;
-				return true;
-			}
-			return false;
+			const exists = (before&@as(u64,1)<<overflow)!=0;
+			self.cardinality -= @boolToInt(exists);
+			return exists;
 		}
 
 		pub inline fn get(self: *const Self, index: u32) bool {

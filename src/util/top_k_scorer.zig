@@ -25,18 +25,24 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 			return std.math.order(rhs.score,lhs.score);
 		}
 
-		backing_storage: []T,
-		
+		pub fn lessThan(context: void, lhs: TopKQueueEntry,rhs: TopKQueueEntry) bool {
+			_ = context;
+			return lhs.score < rhs.score;
+		}
+
+		backing_storage: []i32,
+		priority_queue: std.PriorityQueue(TopKQueueEntry,void, entryCompareFn),
+
 		node_list: []T,
 		write_ptr: u32,
 
-		priority_queue: std.PriorityQueue(TopKQueueEntry,void, entryCompareFn),
+		sorted_targets: std.BoundedArray(TopKQueueEntry,K),
 
 		pub fn init(allocator: std.mem.Allocator, total_number_of_nodes: T) !Self {
-			var memory = try allocator.alloc(T, total_number_of_nodes);
-			std.mem.set(T, memory,0);
+			var memory = try allocator.alloc(i32, total_number_of_nodes);
+			std.mem.set(i32, memory,0);
 
-			var nodel = try allocator.alloc(T, total_number_of_nodes);
+			var nodel = try allocator.alloc(T, total_number_of_nodes+1);
 			std.mem.set(T, nodel,0);
 			
 			var priority_queue = std.PriorityQueue(TopKQueueEntry,void, entryCompareFn).init(allocator,{});
@@ -47,43 +53,63 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 				.backing_storage = memory,
 				.priority_queue = priority_queue,
 				.node_list = nodel,
-				.write_ptr = 0
+				.write_ptr = 0,
+				.sorted_targets = try std.BoundedArray(TopKQueueEntry,K).init(0),
 			};
 		}
 
 		pub inline fn deinit(self: *Self, allocator: std.mem.Allocator) void {
 			self.priority_queue.deinit();
 			allocator.free(self.backing_storage);
+			allocator.free(self.node_list);
 		}
 
 		pub const TopKScorerIterator = struct {
-			iterator: std.PriorityQueue(TopKQueueEntry,void, entryCompareFn).Iterator,
+			bounded_arr: *std.BoundedArray(TopKQueueEntry,K),
+			index: u32,
 			pub inline fn next(self: *TopKScorerIterator) ?T {
-				if(self.iterator.next()) |item| {
-					return item.node;
-				}
-				return null;
+				if(self.index >= self.bounded_arr.len) return null;
+				const item = self.bounded_arr.buffer[self.index].node;
+				self.index+=1;
+				return item;
+			}
+
+			pub fn reset(self: *TopKScorerIterator) void {
+				self.index = 0;
 			}
 		};
 
 		pub fn reset(self: *Self) void {
+			self.priority_queue.len = 0;
 			self.write_ptr = 0;
-			while(self.priority_queue.removeOrNull()) |_| {
+		}
+
+		pub inline fn addVisit(self: *Self, node: T, exists: bool) void {
+			if(!exists) {
+				self.backing_storage[node] = 0;
 			}
-		}
-
-		pub fn addNewNode(self: *Self, node: T) void {
+			self.backing_storage[node] += 2;
 			self.node_list[self.write_ptr] = node;
-			self.write_ptr+=1;
+			self.write_ptr += @boolToInt(!exists);
 		}
 
-		pub inline fn iterator(self: *Self, graph: *Graph(T)) !TopKScorerIterator {
+		pub inline fn iterator(self: *Self, graph: *Graph(T), bs: *set.FastBitSet) !TopKScorerIterator {
+			var index:u32 = 0;
 			for(self.node_list[0..self.write_ptr]) |item| {
-				const score = self.backing_storage[item];
+				// Compact node list
+				if(graph.erased_nodes.get(item)) {
+					self.node_list[index] = self.node_list[self.write_ptr-1];
+					index+=1;
+					self.write_ptr-=1;
+					_ = bs.unset(item);
+					continue;
+				}
+				index+=1;
+				if(graph.node_list[item].cardinality() > 10000 and !graph.node_list[item].isLargeNode()) {
+					try graph.node_list[item].promoteToLargeDegreeNode(graph);
+				}
+				const item_score = @intCast(i32,graph.node_list[item].cardinality()) - self.backing_storage[item];
 
-				const item_score = @intCast(i32,graph.node_list[item].cardinality())-@intCast(i32,score);
-				
-				self.backing_storage[item] = 0;
 
 				if(self.priority_queue.count() < K) {
 					try self.priority_queue.add(
@@ -104,15 +130,41 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 				}
 			}
 
+			var iter_queue = self.priority_queue.iterator();
+			self.sorted_targets.len = 0;
+			while(iter_queue.next()) |item| {
+				try self.sorted_targets.append(item);
+			}
+
+			std.sort.sort(TopKQueueEntry,self.sorted_targets.buffer[0..self.sorted_targets.len],{}, Self.lessThan);
+
 			return TopKScorerIterator {
-				.iterator = self.priority_queue.iterator()
+				.bounded_arr = &self.sorted_targets,
+				.index = 0
 			};
 		}
 
-
-		pub inline fn addVisit(self: *Self, visited: T) void {
-			self.backing_storage[visited]+=2;
+		pub inline fn cachedIterator(self: *Self) TopKScorerIterator {
+			return TopKScorerIterator {
+				.bounded_arr = &self.sorted_targets,
+				.index = 0
+			};
 		}
+
+		pub inline fn unsetVisitedBitset(self: *Self, bs: *set.FastBitSet) void {
+			if (bs.cardinality < 200) {
+				for(self.node_list[0..self.write_ptr]) |item| {
+					_ = bs.unset(item);
+				}
+			}
+			else {
+				bs.unsetAll();
+			}
+			if (bs.cardinality != 0) {
+				std.debug.print("MAJOR ERROR\n", .{});
+			}
+		}
+
 
 		pub inline fn copyResultsToArray(self: *Self, array: []i32, visited: *set.FastBitSet) TopKError!void {
 			if(array.len < self.backing_storage.len) {
@@ -131,10 +183,10 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 test "TopKScorer: Check top k scorer basics" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 	var topk = try TopKScorer(u16,1).init(gpa.allocator(),100);
-	topk.setNextTargetDegree(5);
+	topk.reset();
 
-	topk.addVisit(2,2);
-	topk.addVisit(3,1);
+	topk.addVisit(2,false);
+	topk.addVisit(3,false);
 
 	var topkiter = topk.iterator();
 	const item = topkiter.next() orelse unreachable;

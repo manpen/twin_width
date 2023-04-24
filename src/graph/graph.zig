@@ -27,10 +27,14 @@ pub fn Graph(comptime T: type) type {
 
     return struct {
         const Self = @This();
+				pub const promote_thresh_inner = promote_thresh;
         number_of_nodes: u32,
         number_of_edges: u32,
 				// Stores the all nodes the index is also the id of the node
         node_list: []NodeType,
+
+				last_red_edges: std.ArrayListUnmanaged(T),
+				last_merge_level_one_merge: bool,
 
 				// Keep track of erased nodes since the node list will not shrink!
         erased_nodes: bitset.FastBitSet,
@@ -175,6 +179,21 @@ pub fn Graph(comptime T: type) type {
                 self.cumulative_red_edges = std.math.maxInt(i64);
 								self.delta_red_edges = std.math.maxInt(i32);
             }
+            pub inline fn isLessOrEqual(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) bool {
+							if(self.tww >= current_twin_width or other.tww >= current_twin_width) {
+								if (self.tww <= other.tww) {
+									return true;
+								} else {
+									return false;
+								}
+							}
+							else {
+								if(self.cumulative_red_edges <= other.cumulative_red_edges) {
+									return true;
+								}
+							}
+							return false;
+            }
 
             pub inline fn isLess(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) bool {
 							if(self.tww >= current_twin_width or other.tww >= current_twin_width) {
@@ -201,7 +220,7 @@ pub fn Graph(comptime T: type) type {
 
 				
 
-        pub fn calculateInducedTwwPotential(self: *Self, erased: T, survivor: T) InducedTwinWidthPotential {
+        pub fn calculateInducedTwwPotential(self: *Self, erased: T, survivor: T, ub: *InducedTwinWidthPotential, current_tww: T) InducedTwinWidthPotential {
 						// NOTICE: This function performs better than calculateInducedTww at the moment
 						var red_potential:i64 = 0;
 
@@ -229,6 +248,7 @@ pub fn Graph(comptime T: type) type {
 
 						delta_red += self.node_list[survivor].red_edges.cardinality();
 
+
             var tww: T = 0;
             var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
 
@@ -254,6 +274,11 @@ pub fn Graph(comptime T: type) type {
 										tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
 									}
                 }
+
+								const current = InducedTwinWidthPotential{ .tww = tww, .cumulative_red_edges = red_potential, .delta_red_edges = std.math.maxInt(i32)};
+								if(!current.isLess(ub.*, current_tww)) {
+									return current;	
+								}
             }
 
             tww = std.math.max(tww, delta_red);
@@ -396,6 +421,8 @@ pub fn Graph(comptime T: type) type {
 						else if(erased == survivor) {
 							return GraphError.MisformedEdgeList;
 						}
+						self.last_red_edges.shrinkRetainingCapacity(0);
+						self.last_merge_level_one_merge = false;
 
             self.erased_nodes.set(erased);
 						if(self.node_list[survivor].isLeaf()) {
@@ -413,12 +440,16 @@ pub fn Graph(comptime T: type) type {
                 if (item != survivor) {
                     if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
+												try self.last_red_edges.append(self.failing_allocator.allocator(), item);
                     }
 										else {
 											// Inform about the removal of the red edge
 											try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(),red_edge_stack.NewRedEdge(T).redToDeleted(item));
 										}
                 }
+								else {
+									self.last_merge_level_one_merge = true;
+								}
             }
 
             var tww: T = 0;
@@ -429,6 +460,7 @@ pub fn Graph(comptime T: type) type {
 
             while (black_iter.next()) |item| {
                 if (item == survivor or item == erased) {
+										self.last_merge_level_one_merge = true;
                     continue;
                 }
                 // Came from erased
@@ -437,6 +469,8 @@ pub fn Graph(comptime T: type) type {
 												try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(),red_edge_stack.NewRedEdge(T).blackToRedOther(item));
 
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
+
+												try self.last_red_edges.append(self.failing_allocator.allocator(), item);
                     }
                 }
                 // Came from survivor
@@ -481,14 +515,14 @@ pub fn Graph(comptime T: type) type {
 
         pub fn solveGreedy(self: *Self) !T {
 						// NOTICE: This function is single pass at the moment!
-            var solver = try solver_resources.SolverResources(T, 25, 100).init(self);
+            var solver = try solver_resources.SolverResources(T, 20, 100).init(self);
             defer solver.deinit(self.allocator);
             var cc_iter = self.connected_components_min_heap.iterator();
             var tww: T = 0;
             var last_node: ?T = null;
             self.contraction.reset();
             while (cc_iter.next()) |cc| {
-                tww = std.math.max(try self.connected_components.items[cc.index].solveGreedyTopK(25, 100, &solver), tww);
+                tww = std.math.max(try self.connected_components.items[cc.index].solveGreedyTopK(20, 100, &solver), tww);
 
                 if (self.connected_components.items[cc.index].subgraph.nodes.len == 1) {
                     const survivor = self.connected_components.items[cc.index].subgraph.nodes[0];
@@ -531,6 +565,8 @@ pub fn Graph(comptime T: type) type {
             var graph = Self{ .number_of_nodes = number_of_nodes, .number_of_edges = 0, .node_list = node_list, .allocator = allocator, .contraction = try contraction.ContractionSequence(T).init(allocator, number_of_nodes), .scratch_bitset = try bitset.FastBitSet.initEmpty(number_of_nodes, allocator), .erased_nodes = try bitset.FastBitSet.initEmpty(number_of_nodes, allocator), .connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){}, .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
 						.failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
 						.connected_components_node_list_slice = try allocator.alloc(T,number_of_nodes),
+						.last_red_edges = try std.ArrayListUnmanaged(T).initCapacity(allocator,number_of_nodes),
+						.last_merge_level_one_merge = false,
 						};
 
             return graph;
@@ -575,6 +611,8 @@ pub fn Graph(comptime T: type) type {
                 .contraction = try contraction.ContractionSequence(T).init(allocator, pace.number_of_nodes),
                 .erased_nodes = try bitset.FastBitSet.initEmpty(pace.number_of_nodes, allocator),
                 .scratch_bitset = try bitset.FastBitSet.initEmpty(pace.number_of_nodes, allocator),
+								.last_red_edges = try std.ArrayListUnmanaged(T).initCapacity(allocator,pace.number_of_nodes),
+								.last_merge_level_one_merge = false,
                 .connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){},
 								.connected_components_node_list_slice = try allocator.alloc(T,pace.number_of_nodes),
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),

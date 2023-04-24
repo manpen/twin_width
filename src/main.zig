@@ -19,8 +19,7 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
 	var timer = try std.time.Instant.now();
 	var pace_part = try pace.Pace2023Fmt(T).fromFile(allocator,filename);
 	var loaded_graph = graph.Graph(T).loadFromPace(allocator,&pace_part) catch |err| {
-			//Print error message if the graph could not be loaded
-			std.debug.print("Could not load graph: {}", .{err});
+			//Print error message if the graph could not be loaded std.debug.print("Could not load graph: {}", .{err});
 			return err;
 	};
 	defer loaded_graph.deinit();
@@ -79,7 +78,7 @@ pub fn main() !void {
 		var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 		defer _ = gpa.deinit();
 
-		const target_directory = "instances/heuristic-public";
+		const target_directory = "instances/exact-public";
 
 		var allocator = gpa.allocator();
 		std.debug.print("{s:<25} | {s:>8} | {s:>8} | {s:>8} | {s:>6}\n",.{"filename","nodes","edges","tww","time (ms)"});
@@ -120,10 +119,15 @@ pub fn main() !void {
 		// Update: Not anymore
 		//try initial_solver(hpa,"instances/heuristic-public/heuristic_162.gr","heuristic_162.gr");
 		//hpa_allocator.reset();
-		
-		try initial_solver(hpa,"instances/heuristic-public/heuristic_186.gr","heuristic_186.gr");
-		hpa_allocator.reset();
 
+		//166 important
+		//172 important
+		
+		//try initial_solver(hpa,"instances/heuristic-public/heuristic_172.gr","heuristic_172.gr");
+		//hpa_allocator.reset();
+
+		//try initial_solver(hpa,"instances/heuristic-public/heuristic_186.gr","heuristic_186.gr");
+		//hpa_allocator.reset();
 
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);
 		while(try dirit.next()) |item| {

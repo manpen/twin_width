@@ -10,6 +10,9 @@ const solver_resources = @import("solver.zig");
 const retraceable_contraction = @import("../tww/retraceable_contraction_sequence.zig");
 const dfs_mod = @import("dfs.zig");
 const benchmark_helper = @import("../util/benchmark_helper.zig");
+const min_hash = @import("../util/min_hash.zig");
+const NodePairs = @import("solver.zig").NodePairs;
+const NodeTuple = @import("solver.zig").NodeTuple;
 
 pub const SubGraphError = error{
     SolverResourcesNotInitialized,
@@ -39,60 +42,52 @@ pub fn InducedSubGraph(comptime T: type) type {
             return std.math.order(ctx.node_list[rhs].cardinality(), ctx.node_list[lhs].cardinality());
         }
 
-				pub inline fn selectBestMoveOfIter(self: *Self, comptime Iter: type, iter: *Iter, first_node: T, current_tww: T) TargetMinimalInducedTww {
-          var induced_tww = Graph(T).InducedTwinWidthPotential.default();
-          var min_target: T = 0;
-					while(iter.next()) |item| {
-						if (item == first_node) continue;
-						if (self.graph.erased_nodes.get(item)) continue;
+        pub inline fn selectBestMoveOfIter(self: *Self, comptime Iter: type, iter: *Iter, first_node: T, current_tww: T) TargetMinimalInducedTww {
+            var induced_tww = Graph(T).InducedTwinWidthPotential.default();
+            var min_target: T = 0;
+            while (iter.next()) |item| {
+                if (item == first_node) continue;
+                if (self.graph.erased_nodes.get(item)) continue;
 
-						const cal_induced_tww = self.graph.calculateInducedTwwPotential(item, first_node, &induced_tww, current_tww);
+                const cal_induced_tww = self.graph.calculateInducedTwwPotential(item, first_node, &induced_tww, current_tww);
 
-						if (cal_induced_tww.isLess(induced_tww, current_tww)) {
-							induced_tww = cal_induced_tww;
-							min_target = item;
-						}
-					}
-					return TargetMinimalInducedTww {
-						.potential = induced_tww,
-						.target = min_target
-					};
-				}
+                if (cal_induced_tww.isLess(induced_tww, current_tww)) {
+                    induced_tww = cal_induced_tww;
+                    min_target = item;
+                }
+            }
+            return TargetMinimalInducedTww{ .potential = induced_tww, .target = min_target };
+        }
 
         pub inline fn selectBestMoveIncremental(self: *Self, comptime K: u32, comptime P: u32, first_node: T, solver: *solver_resources.SolverResources(T, K, P), current_tww: T, first_level_merge: bool, erased: T, red_edges_erased: []T) !TargetMinimalInducedTww {
             var induced_tww = Graph(T).InducedTwinWidthPotential.default();
 
             var min_target: T = 0;
             const result = bfs_mod.bfs_topk_high_performance_incremental(T, K, first_node, erased, first_level_merge, red_edges_erased, self.graph, &solver.scratch_bitset, &solver.scorer);
-						if(!result) return TargetMinimalInducedTww{ .potential = induced_tww, .target = min_target };
-            
-						var iterator = try solver.scorer.iterator(self.graph, &solver.scratch_bitset);
+            if (!result) return TargetMinimalInducedTww{ .potential = induced_tww, .target = min_target };
 
-            const result_best_move = self.selectBestMoveOfIter(@TypeOf(iterator),&iterator,first_node, current_tww);
+            var iterator = try solver.scorer.iterator(self.graph);
+
+            const result_best_move = self.selectBestMoveOfIter(@TypeOf(iterator), &iterator, first_node, current_tww);
 
             if (result.potential.cumulative_red_edges == std.math.maxInt(i64)) {
-                std.debug.print("Error cannot find contraction partner!\n", .{});
+                @panic("Error cannot find contraction partner!");
             }
 
             return result_best_move;
         }
 
-        pub inline fn selectBestMove(self: *Self, comptime K: u32, comptime P: u32, first_node: T, solver: *solver_resources.SolverResources(T, K, P), current_tww: T, perf_bfs: *benchmark_helper.BenchmarkHelper, perf_calc: *benchmark_helper.BenchmarkHelper) !TargetMinimalInducedTww {
-            try perf_bfs.start();
+        pub inline fn selectBestMove(self: *Self, comptime K: u32, comptime P: u32, first_node: T, solver: *solver_resources.SolverResources(T, K, P), current_tww: T) !TargetMinimalInducedTww {
             bfs_mod.bfs_topk_high_performance(T, K, first_node, self.graph, &solver.scratch_bitset, &solver.scorer);
-            
-            var iterator = try solver.scorer.iterator(self.graph, &solver.scratch_bitset);
-            try perf_bfs.stop();
 
-            try perf_calc.start();
+            var iterator = try solver.scorer.iterator(self.graph);
 
-            const result = self.selectBestMoveOfIter(@TypeOf(iterator),&iterator,first_node, current_tww);
+            const result = self.selectBestMoveOfIter(@TypeOf(iterator), &iterator, first_node, current_tww);
 
             if (result.potential.cumulative_red_edges == std.math.maxInt(i64)) {
-                std.debug.print("Error cannot find contraction partner!\n", .{});
+                @panic("Error cannot find contraction partner!");
             }
 
-            try perf_calc.stop();
             return result;
         }
 
@@ -186,7 +181,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 
         pub inline fn addContractionAndLeafReduction(self: *Self, enable_follow_up_merge: *bool, seq: *retraceable_contraction.RetraceableContractionSequence(T), min_contraction: contraction.Contraction(T), contractions_left: *u32) !T {
             var total_tww: T = 0;
-						enable_follow_up_merge.* = true;
+            enable_follow_up_merge.* = true;
 
             // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
             contractions_left.* -= 1;
@@ -206,7 +201,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                             last_evoked_twin_width = try self.graph.addContraction(item, min_contraction.survivor, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
-														enable_follow_up_merge.* = false;
+                            enable_follow_up_merge.* = false;
                             // Only merge one other leaf since we do this for every leaf and there should not be any more leafes left
                             // WARNING: The iterator probably break if we try to go on since addContraction will update the edge list
                             break;
@@ -225,7 +220,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                             last_evoked_twin_width = try self.graph.addContraction(k, item, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
-														enable_follow_up_merge.* = false;
+                            enable_follow_up_merge.* = false;
                             break;
                         } else {
                             first_leaf = item;
@@ -237,10 +232,468 @@ pub fn InducedSubGraph(comptime T: type) type {
             return total_tww;
         }
 
+        pub fn LookaheadResult(comptime NodeCtx: type) type {
+            return struct {
+                const Own = @This();
+                result: ?NodeCtx.ScoreType,
+                failed_score: ?NodeCtx.ScoreType,
+                depth: u32,
+
+                pub inline fn default() Own {
+                    return Own{
+                        .result = null,
+                        .failed_score = null,
+                        .depth = 0,
+                    };
+                }
+
+                pub inline fn assignIfBetter(self: *Own, other: Own, ctx: *NodeCtx, generator: *std.rand.DefaultPrng) bool {
+                    if (self.result) |r_own| {
+                        if (other.result) |r_other| {
+                            switch (ctx.compare(r_other, r_own)) {
+                                .gt => {
+                                    self.* = other;
+                                    return true;
+                                },
+                                .eq => {
+                                    // On equal score chose at random if we overwrite or leave it
+                                    if (generator.next() % 2 == 0) {
+                                        self.* = other;
+                                        return true;
+                                    } else {
+                                        return false;
+                                    }
+                                },
+                                .lt => {
+                                    return false;
+                                },
+                            }
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        // Asign if depth of other is greater
+                        if (other.result != null or self.depth <= other.depth) {
+                            if (self.depth == other.depth and other.result == null) {
+                                if (self.failed_score != null and other.failed_score != null) {
+                                    switch (ctx.compare(other.failed_score.?, self.failed_score.?)) {
+                                        .gt => {
+                                            self.* = other;
+                                            return true;
+                                        },
+                                        .eq => {
+                                            // On equal score chose at random if we overwrite or leave it
+                                            if (generator.next() % 2 == 0) {
+                                                self.* = other;
+                                                return true;
+                                            } else {
+                                                return false;
+                                            }
+                                        },
+                                        .lt => {
+                                            return false;
+                                        },
+                                    }
+                                }
+                            }
+                            self.* = other;
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+            };
+        }
+
+				pub fn findOneMoveBelowUpperBound(self: *Self, bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, upper_bound: T, seed: u64, less: std.PriorityQueue()) !?contraction.Contraction(T) {
+				    _ = less;
+						var bounded_arr = try std.BoundedArray(contraction.Contraction(T),100).init(0);
+
+
+				    
+						for (self.nodes) |node| {
+							if (self.graph.erased_nodes.get(node)) continue;
+							visited.unsetAll();
+							var bf = bfs_mod.bfs(T, node, self.graph, visited, bfs_queue, .{ .max_level = 2, .kind = .both });
+							while (bf.next()) |other_node| {
+								if (other_node >= node) continue;
+
+								const result = self.graph.calculateInducedTww(other_node,node,null);
+
+								if(result.tww >= upper_bound) continue;
+								if(bounded_arr.len < 100) {
+									try bounded_arr.append(contraction.Contraction(T) {
+											.erased = other_node,
+											.survivor = node,
+									});
+								}
+								else {
+									break;
+								}
+							}
+						}
+
+						if(bounded_arr.len == 0) return null;
+
+						var gen = std.rand.DefaultPrng.init(seed);
+						return bounded_arr.buffer[gen.next() % bounded_arr.len];
+				}
+
+				pub fn solveGreedyBacktrackToLastIncrease(self: *Self, best_contraction_seq: *contraction.ContractionSequence(T),bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, seq: *retraceable_contraction.RetraceableContractionSequence(T), upper_bound: T) !T {
+					var check = best_contraction_seq.iterator();
+					while(check.next()) |item| {
+						_ = try self.graph.addContraction(item.erased,item.survivor,seq);
+					}
+					
+					// Ok we have the best known current sequence
+					var current_tww: T = seq.getTwinWidth();
+
+					var current_level = self.nodes.len;
+					while(seq.lastContraction()) |_| {
+						try self.graph.revertLastContraction(seq);
+						current_level-=1;
+						if(seq.getTwinWidth() != current_tww) {
+							std.debug.print("Previous tww {} and now {}\n",.{current_tww, seq.getTwinWidth()});
+							break;
+						}
+					}
+
+					var seed:u64 = 17;
+
+					var max_backtracks:u32 = 10000;
+					var generator = std.rand.DefaultPrng.init(seed);
+
+					while(!seq.isComplete()) {
+						seed+=17;
+						var move = try self.findOneMoveBelowUpperBound(bfs_queue,visited,upper_bound, seed);
+						if(move == null) {
+							max_backtracks-=1;
+							if(max_backtracks == 0) return std.math.maxInt(T);
+
+							while(seq.lastContraction()) |_| {
+								if(generator.next()%4 != 0) {
+									try self.graph.revertLastContraction(seq);
+								}
+								else {
+									break;
+								}
+							}
+							continue;
+						}
+
+						_ = try self.graph.addContraction(move.?.erased, move.?.survivor, seq);
+						current_level+=1;
+					}
+
+					return seq.getTwinWidth();
+				}
+
+        pub fn solveGreedyConstraint(self: *Self, bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, seq: *retraceable_contraction.RetraceableContractionSequence(T), upper_bound: T) !T {
+            var constraints = std.AutoHashMap(T, T).init(self.graph.allocator);
+
+            var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
+
+            var total_max_reverts:u32 = 1_000;
+
+            while (contractions_left > 0) {
+                var total_nodes_checked: u32 = 0;
+                var min_tww: ?T = null;
+                var min_contraction = contraction.Contraction(T){
+                    .erased = 0,
+                    .survivor = 0,
+                };
+
+                for (self.nodes) |node| {
+                    if (self.graph.erased_nodes.get(node)) continue;
+                    visited.unsetAll();
+                    var bf = bfs_mod.bfs(T, node, self.graph, visited, bfs_queue, .{ .max_level = 2, .kind = .both });
+                    outer: while (bf.next()) |other_node| {
+                        if (other_node >= node) continue;
+
+                        const result = try self.graph.addContraction(other_node, node, seq);
+                        for (self.nodes) |current_node| {
+                            if (self.graph.erased_nodes.get(current_node)) continue;
+                            if (constraints.get(current_node)) |less_than| {
+                                if (self.graph.node_list[current_node].red_edges.cardinality() >= less_than) {
+                                    try self.graph.revertLastContraction(seq);
+                                    continue :outer;
+                                }
+                            }
+                        }
+                        const compareable_result = self.graph.node_list[node].red_edges.cardinality();
+                        try self.graph.revertLastContraction(seq);
+                        if (result >= upper_bound) continue;
+
+                        if (min_tww == null) {
+                            min_tww = compareable_result;
+                            min_contraction = contraction.Contraction(T){
+                                .erased = other_node,
+                                .survivor = node,
+                            };
+                        } else if (min_tww.? >= compareable_result) {
+                            min_tww = compareable_result;
+                            min_contraction = contraction.Contraction(T){
+                                .erased = other_node,
+                                .survivor = node,
+                            };
+                        }
+
+                        total_nodes_checked += 1;
+                    }
+                }
+                if (total_nodes_checked == 0) {
+                    total_max_reverts -= 1;
+                    if (total_max_reverts == 0) return std.math.maxInt(T);
+										constraints.clearRetainingCapacity();
+
+                    for (self.nodes) |current_node| {
+                        if (self.graph.erased_nodes.get(current_node)) continue;
+												if(self.graph.node_list[current_node].red_edges.cardinality() == upper_bound-1) {
+													try constraints.put(current_node,upper_bound-1);
+													break;
+												}
+                    }
+
+                    while (seq.lastContraction()) |_| {
+                        try self.graph.revertLastContraction(seq);
+                    }
+            				contractions_left = @intCast(u32, self.nodes.len - 1);
+										continue;
+                }
+
+                _ = try self.graph.addContraction(min_contraction.erased, min_contraction.survivor, seq);
+
+                if (seq.getTwinWidth() >= upper_bound) {
+                    return std.math.maxInt(T);
+                }
+                contractions_left -= 1;
+            }
+
+            return seq.getTwinWidth();
+        }
+
+        fn solveGreedyLookaheadGeneric(self: *Self, comptime NodeCtx: type, comptime ScoreCtx: type, ctx: *NodeCtx, ctx_score: *ScoreCtx, level: u32, bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, seq: *retraceable_contraction.RetraceableContractionSequence(T), seed: u64) !LookaheadResult(ScoreCtx) {
+            const initial_level = level;
+            var modifiable_level = level;
+
+            const max_trials_per_level: u32 = 1;
+            var priority_queue = std.PriorityQueue(NodeCtx.MapType, *NodeCtx, NodeCtx.compare).init(self.graph.allocator, ctx);
+            try priority_queue.ensureTotalCapacity(max_trials_per_level);
+            defer priority_queue.deinit();
+
+            defer {
+                for (0..(initial_level - modifiable_level)) |_| {
+                    self.graph.revertLastContraction(seq) catch {
+                        @panic("Error in defer revert last contraction!");
+                    };
+                }
+            }
+
+            var generator = std.rand.DefaultPrng.init(seq.lastContraction().?.erased + seed);
+
+            while (modifiable_level > 0) {
+                priority_queue.len = 0;
+
+                var nodes_left: u32 = 0;
+                for (self.nodes) |node| {
+                    if (self.graph.erased_nodes.get(node)) continue;
+                    visited.unsetAll();
+                    nodes_left += 1;
+                    var bf = bfs_mod.bfs(T, node, self.graph, visited, bfs_queue, .{ .max_level = 2, .kind = .both });
+                    while (bf.next()) |other_node| {
+                        if (other_node >= node) continue;
+                        if (self.graph.erased_nodes.get(other_node)) {
+                            @panic("A BFS should never return an erased node!");
+                        }
+
+                        const mapped = ctx.map(other_node, node, self.graph);
+                        if (mapped == null) continue;
+                        if (priority_queue.count() < max_trials_per_level) {
+                            try priority_queue.add(mapped.?);
+                        } else if (priority_queue.peek()) |top_prio| {
+                            switch (ctx.compare(mapped.?, top_prio)) {
+                                .gt => {
+                                    _ = priority_queue.remove();
+                                    try priority_queue.add(mapped.?);
+                                },
+                                .eq => {
+                                    // On equal score chose at random if we overwrite or leave it
+                                    if (generator.next() % 2 == 0) {
+                                        _ = priority_queue.remove();
+                                        try priority_queue.add(mapped.?);
+                                    }
+                                },
+                                .lt => {},
+                            }
+                        }
+                    }
+                }
+                if (nodes_left <= 1) {
+                    return LookaheadResult(ScoreCtx){
+                        .result = ctx_score.evaluate(self.graph, seq),
+                        .failed_score = null,
+                        .depth = level - modifiable_level,
+                    };
+                }
+                if (priority_queue.count() == 0) {
+                    return LookaheadResult(ScoreCtx){
+                        .result = null,
+                        .failed_score = ctx_score.evaluate(self.graph, seq),
+                        .depth = level - modifiable_level,
+                    };
+                }
+
+                var selected = generator.next() % priority_queue.count();
+                const item = priority_queue.items[selected];
+                _ = try self.graph.addContraction(item.erased, item.survivor, seq);
+                modifiable_level -= 1;
+            }
+
+            return LookaheadResult(ScoreCtx){
+                .result = ctx_score.evaluate(self.graph, seq),
+                .failed_score = null,
+                .depth = level,
+            };
+        }
+
+        fn collectNodePairsIntoListGeneric(self: *Self, comptime Ctx: type, ctx: *Ctx, k: u32, bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, node_priority: *std.PriorityQueue(Ctx.MapType, *Ctx, Ctx.compare)) !void {
+            for (self.nodes) |node| {
+                if (self.graph.erased_nodes.get(node)) continue;
+                visited.unsetAll();
+                var bf = bfs_mod.bfs(T, node, self.graph, visited, bfs_queue, .{ .max_level = 2, .kind = .both });
+                while (bf.next()) |other_node| {
+                    if (other_node >= node) continue;
+
+                    const result = ctx.map(other_node, node, self.graph);
+                    if (result) |r| {
+                        if (node_priority.count() < k) {
+                            try node_priority.add(r);
+                        } else if (node_priority.peek()) |top_prio| {
+                            if (ctx.compare(r, top_prio) == .gt) {
+                                _ = node_priority.remove();
+                                try node_priority.add(r);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        pub fn solveGreedyLookahead(self: *Self, comptime NodeCtx: type, comptime ScoreCtx: type, ctx: *NodeCtx, ctx_score: *ScoreCtx, k: u32, lookahead: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, upper_bound: ?T) !T {
+            var priority_queue = std.PriorityQueue(NodeCtx.MapType, *NodeCtx, NodeCtx.compare).init(self.graph.allocator, ctx);
+            defer priority_queue.deinit();
+
+            var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
+            // Hard graphs exact 6,14,18,32,38
+
+            var upper_bound_set = upper_bound orelse std.math.maxInt(T);
+            ctx.setUpperBound(upper_bound_set - 1);
+            ctx_score.setUpperBound(upper_bound_set - 1);
+
+            var seed: u64 = 0;
+
+            var generator = std.rand.DefaultPrng.init(17);
+            while (contractions_left > 0) {
+                priority_queue.len = 0;
+                try self.collectNodePairsIntoListGeneric(NodeCtx, ctx, k, bfs_queue, visited, &priority_queue);
+
+                var max_result: LookaheadResult(ScoreCtx) = LookaheadResult(ScoreCtx).default();
+                var max_contraction: contraction.Contraction(T) = undefined;
+                var total_egligible_moves: u32 = 0;
+
+                while (priority_queue.removeOrNull()) |i| {
+                    total_egligible_moves += 1;
+                    _ = try self.graph.addContraction(i.erased, i.survivor, seq);
+                    seed += 19;
+                    const result = try self.solveGreedyLookaheadGeneric(NodeCtx, ScoreCtx, ctx, ctx_score, lookahead, bfs_queue, visited, seq, seed);
+
+                    try self.graph.revertLastContraction(seq);
+
+                    if (max_result.assignIfBetter(result, ctx_score, &generator)) {
+                        max_contraction = .{ .survivor = i.survivor, .erased = i.erased };
+                    }
+                }
+                if (total_egligible_moves == 0) {
+                    // Could not find solution
+                    return std.math.maxInt(T);
+                }
+                _ = try self.graph.addContraction(max_contraction.erased, max_contraction.survivor, seq);
+                contractions_left -= 1;
+            }
+            return seq.getTwinWidth();
+        }
+
+				pub fn solveSweepingSolverTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
+            solver.scratch_bitset.unsetAll();
+            var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
+            if (contractions_left == 0) return 0;
+            var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
+            _ = min_contraction;
+            var total_tww: T = seq.getTwinWidth();
+
+						var priority_queue = std.PriorityQueue(Graph(T).InducedTwinWidthPotential,void,Graph(T).InducedTwinWidthPotential.compare).init(self.graph.allocator,{});
+
+						var remaining_nodes:T = 0;
+						for(self.nodes) |n| {
+							if(self.graph.erased_nodes.get(n)) @panic("No nodes erased at start");
+							solver.scratch_node_list[remaining_nodes] = n;
+							remaining_nodes+=1;
+						}
+						
+						var sweeping_thresh:u32 = 0;
+						
+            while (contractions_left > 0) {
+							var total_contractions:u32 = 0;
+
+							const remaining_nodes_before = remaining_nodes;
+
+							// Need overflow
+							var index:i32 = 0;
+							while (index < remaining_nodes): (index+=1) {
+								const item = solver.scratch_node_list[@intCast(u32,index)];
+								if(self.graph.erased_nodes.get(item)) @panic("All erased nodes are removed earlier");
+                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+                var selection = try self.selectBestMove(K, P, item, solver, total_tww);
+								if(selection.potential.tww <= sweeping_thresh) {
+									_ = try self.graph.addContraction(item,selection.target,seq);
+									contractions_left-=1;
+									if(contractions_left==0) break;
+									// Swap remove node
+									remaining_nodes-=1;
+									solver.scratch_node_list[@intCast(u32,index)] = solver.scratch_node_list[remaining_nodes];
+									index-=1;
+
+									total_contractions += 1;
+								}
+								else {
+									try priority_queue.add(selection.potential);
+								}
+							}
+
+							var sqrt = remaining_nodes_before/std.math.log2(remaining_nodes_before);
+							if(total_contractions < sqrt) {
+								var counter:u32 = 0;
+								var new_thresh:u32 = 0;
+								while(priority_queue.removeOrNull()) |item| {
+									new_thresh = item.tww;
+									counter+=1;
+									if(counter >= sqrt) break;
+								}
+
+								sweeping_thresh = std.math.max(new_thresh,sweeping_thresh);
+							}
+
+							priority_queue.len = 0;
+							std.debug.print("Contractions remaining {}\n",.{contractions_left});
+						}
+						return seq.getTwinWidth();
+				}
+
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), find_articulation_points: bool) !T {
             _ = find_articulation_points;
             // Use once at the beginning later we will only consider merges which involve the survivor of the last merge
-            try self.reduceLeafesAndPaths(K, P, seq, solver);
+            // Paths might be dangerous
+            try self.reduceLeafesAndPaths(K, P, seq, solver, true);
 
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();
@@ -259,7 +712,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 
             var node_counter: u32 = 0;
             for (self.nodes) |item| {
-								// Remove all nodes that have been erased already before
+                // Remove all nodes that have been erased already before
                 if (self.graph.erased_nodes.get(item)) {
                     contractions_left -= 1;
                     continue;
@@ -283,21 +736,17 @@ pub fn InducedSubGraph(comptime T: type) type {
             var max_consecutive_postpones: u32 = contractions_left;
             var current_postpones: u32 = 0;
 
-            var select_move_perf_bfs = benchmark_helper.BenchmarkHelper.init();
-
-            var select_move_perf_calc = benchmark_helper.BenchmarkHelper.init();
-
             // Disable exhaustive solving for now
             const exhaustive_solving_thresh = 240;
 
-						var enable_follow_up_merge: bool = true;
+            var enable_follow_up_merge: bool = true;
 
             while (contractions_left > exhaustive_solving_thresh) {
                 var prio_item = try solver.priority_queue.removeNext(total_tww);
                 var first_node = prio_item;
 
-								solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-                var selection = try self.selectBestMove(K, P, first_node, solver, total_tww, &select_move_perf_bfs, &select_move_perf_calc);
+                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+                var selection = try self.selectBestMove(K, P, first_node, solver, total_tww);
 
                 // Store the best move up to now in the case of multiple postpones
                 if (selection.potential.isLess(best_contraction_potential_postponed, total_tww)) {
@@ -330,42 +779,41 @@ pub fn InducedSubGraph(comptime T: type) type {
 
                 solver.priority_queue.addTick(@intCast(T, contractions_left_copy - contractions_left));
 
-								if(enable_follow_up_merge and contractions_left > total_tww) {
-									var follow_up_moves:u32 = 0;
-									var next_selection: ?TargetMinimalInducedTww = null;
+                if (enable_follow_up_merge and contractions_left > total_tww) {
+                    var follow_up_moves: u32 = 0;
+                    var next_selection: ?TargetMinimalInducedTww = null;
 
-									while(!self.graph.erased_nodes.get(first_node)) {
-										if(next_selection == null) {
-											var iterator = solver.scorer.cachedIterator();
-											next_selection = self.selectBestMoveOfIter(@TypeOf(iterator),&iterator,first_node, total_tww);
-										}
-										if (next_selection.?.potential.isLessOrEqual(selection.potential, total_tww)) {
-											const contractions_left_copy_inner = contractions_left;
+                    while (!self.graph.erased_nodes.get(first_node)) {
+                        if (next_selection == null) {
+                            var iterator = solver.scorer.cachedIterator();
+                            next_selection = self.selectBestMoveOfIter(@TypeOf(iterator), &iterator, first_node, total_tww);
+                        }
+                        if (next_selection.?.potential.isLessOrEqual(selection.potential, total_tww)) {
+                            const contractions_left_copy_inner = contractions_left;
 
-											min_contraction = contraction.Contraction(T){ .survivor = first_node, .erased = next_selection.?.target };
+                            min_contraction = contraction.Contraction(T){ .survivor = first_node, .erased = next_selection.?.target };
 
-											total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge,seq, min_contraction, &contractions_left), total_tww);
-											follow_up_moves+=1;
-											next_selection = null;
+                            total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge, seq, min_contraction, &contractions_left), total_tww);
+                            follow_up_moves += 1;
+                            next_selection = null;
 
-											solver.priority_queue.addTick(@intCast(T, contractions_left_copy_inner - contractions_left));
+                            solver.priority_queue.addTick(@intCast(T, contractions_left_copy_inner - contractions_left));
 
-											if (total_tww >= contractions_left) break;
-											if (!enable_follow_up_merge) break;
-										} else {
-											// If the node seems egligable for merges update distance metrics and try again to merge
-											if(follow_up_moves > 5) {
-												solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-                				next_selection = try self.selectBestMove(K, P, first_node, solver, total_tww, &select_move_perf_bfs, &select_move_perf_calc);
-												follow_up_moves = 0;
-											}
-											else {
-												// otherwise break
-												break;
-											}
-										}
-									}
-								}
+                            if (total_tww >= contractions_left) break;
+                            if (!enable_follow_up_merge) break;
+                        } else {
+                            // If the node seems egligable for merges update distance metrics and try again to merge
+                            if (follow_up_moves > 5) {
+                                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+                                next_selection = try self.selectBestMove(K, P, first_node, solver, total_tww);
+                                follow_up_moves = 0;
+                            } else {
+                                // otherwise break
+                                break;
+                            }
+                        }
+                    }
+                }
 
                 // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
                 max_consecutive_postpones = contractions_left + 1;
@@ -400,14 +848,15 @@ pub fn InducedSubGraph(comptime T: type) type {
             for (0..(contractions_left + 1)) |_| {
                 try bounded_array.append(try solver.priority_queue.removeNext(total_tww));
             }
+            std.debug.print("Exhaustive initial tww {}\n", .{total_tww});
 
-						// Do an exhaustive search for the best contraction sequence
+            // Do an exhaustive search for the best contraction sequence
             while (contractions_left > 0) {
                 var move = self.selectBestMoveExhaustive(exhaustive_solving_thresh + 1, &bounded_array, total_tww);
 
                 total_tww = std.math.max(try self.graph.addContraction(move.erased, move.survivor, seq), total_tww);
                 contractions_left -= 1;
-								if (total_tww >= contractions_left) {
+                if (total_tww >= contractions_left) {
                     // Contract all remaining vertices in any order
                     var first_left_node: ?T = null;
                     while (contractions_left > 0) {
@@ -428,7 +877,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             return total_tww;
         }
 
-        pub fn reduceLeafesAndPaths(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !void {
+        pub fn reduceLeafesAndPaths(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), comptime reduce_paths: bool) !void {
             solver.bfs_stack.clear();
             for (self.nodes) |item| {
                 solver.bfs_stack.addNext(item);
@@ -450,27 +899,29 @@ pub fn InducedSubGraph(comptime T: type) type {
                                 leafes_reduced += 1;
                             }
                         }
-                        var new_item = item;
-                        // Ok no leaf here check path and the corresponding length
-                        while (self.graph.node_list[parent].cardinality() <= 2) {
-                            if (self.graph.node_list[parent].cardinality() == 1) {
-                                _ = try self.graph.addContraction(new_item, parent, seq);
-                                reduced_paths += 1;
-                                break;
-                            }
-                            var iternext = self.graph.node_list[parent].unorderedIterator();
-                            var next_parent_p1 = iternext.next().?;
-                            var next_parent_p2 = iternext.next().?;
+                        if (reduce_paths) {
+                            var new_item = item;
+                            // Ok no leaf here check path and the corresponding length
+                            while (self.graph.node_list[parent].cardinality() <= 2) {
+                                if (self.graph.node_list[parent].cardinality() == 1) {
+                                    _ = try self.graph.addContraction(new_item, parent, seq);
+                                    reduced_paths += 1;
+                                    break;
+                                }
+                                var iternext = self.graph.node_list[parent].unorderedIterator();
+                                var next_parent_p1 = iternext.next().?;
+                                var next_parent_p2 = iternext.next().?;
 
-                            var next_parent = if (next_parent_p1 == new_item) next_parent_p2 else next_parent_p1;
-                            if (self.graph.node_list[next_parent].cardinality() == 2) {
-                                _ = try self.graph.addContraction(new_item, parent, seq);
-                                solver.bfs_stack.addNext(parent);
-                                new_item = parent;
-                                parent = next_parent;
-                                reduced_paths += 1;
-                            } else {
-                                break;
+                                var next_parent = if (next_parent_p1 == new_item) next_parent_p2 else next_parent_p1;
+                                if (self.graph.node_list[next_parent].cardinality() == 2) {
+                                    _ = try self.graph.addContraction(new_item, parent, seq);
+                                    solver.bfs_stack.addNext(parent);
+                                    new_item = parent;
+                                    parent = next_parent;
+                                    reduced_paths += 1;
+                                } else {
+                                    break;
+                                }
                             }
                         }
                     }

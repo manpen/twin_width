@@ -10,6 +10,21 @@ const topk = @import("../util/top_k_scorer.zig");
 const InducedSubGraph = @import("subgraph.zig").InducedSubGraph;
 const solver_resources = @import("solver.zig");
 const retraceable_contraction = @import("../tww/retraceable_contraction_sequence.zig");
+const Graph = @import("graph.zig").Graph;
+
+const NodeScorerPotential = @import("../scorer/node_scorer.zig").NodeScorerPotential;
+const NodeScorerSimple = @import("../scorer/node_scorer.zig").NodeScorerSimple;
+const NodeScorerInduced = @import("../scorer/node_scorer.zig").NodeScorerInduced;
+const NodeScorerNewReds = @import("../scorer/node_scorer.zig").NodeScorerNewReds;
+const NodeScorerTotalRedDeg = @import("../scorer/node_scorer.zig").NodeScorerTotalRedDeg;
+const GraphScorer = @import("../scorer/graph_scorer.zig").GraphScorer;
+const GraphScorerWeightedMajor = @import("../scorer/graph_scorer.zig").GraphScorerWeightedMajor;
+const GraphScorerWeightedMinor = @import("../scorer/graph_scorer.zig").GraphScorerWeightedMinor;
+const GraphScorerMinSim = @import("../scorer/graph_scorer.zig").GraphScorerMinSim;
+const GraphScorerMinor = @import("../scorer/graph_scorer.zig").GraphScorerMinor;
+const GraphScorerMinBlacks = @import("../scorer/graph_scorer.zig").GraphScorerMinBlack;
+const graph_scorers = @import("../scorer/graph_scorer.zig");
+const node_scorers = @import("../scorer/node_scorer.zig");
 
 pub fn ConnectedComponentIndex(comptime T: type) type {
     comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -44,10 +59,234 @@ pub fn ConnectedComponent(comptime T: type) type {
 						self.current_contraction_seq.deinit(allocator);
         }
 
-        pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T,K,P)) !T {
-					const result = try self.subgraph.solveGreedyTopK(K,P,&self.current_contraction_seq,solver,true);
+        pub fn solveSweepingTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T,K,P)) !T {
+					const result = try self.subgraph.solveSweepingSolverTopK(K,P,&self.current_contraction_seq,solver);
+					try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
 					self.tww = result;
 					return result;
+        }
+
+        pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T,K,P)) !T {
+					var result = try self.subgraph.solveGreedyTopK(K,P,&self.current_contraction_seq,solver,true);
+					try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+					self.tww = result;
+
+					if(self.tww < 300) {
+						try self.resetGraph();
+						const sweeping = try self.solveSweepingTopK(K,P,solver);
+						std.debug.print("Sweeping tww {}\n",.{sweeping});
+						result = std.math.min(result,sweeping);
+					}
+					return result;
+        }
+
+				pub inline fn resetGraph(self: *Self) !void {
+					while(self.current_contraction_seq.lastContraction()) |_| {
+						try self.subgraph.graph.revertLastContraction(&self.current_contraction_seq);
+					}
+				}
+
+        pub fn solveGreedy(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T,K,P)) !T {
+					
+					var ctx_node = NodeScorerInduced(T){};
+					var ctx_score = GraphScorer(T){};
+
+					var final_tww:?T = null;
+					for(0..8) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node),GraphScorer(T), &ctx_node, &ctx_score, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							final_tww = result;
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+
+
+					var ctx_min_sim = GraphScorerMinSim(T, .cumulative) {
+						.visited = &solver.scratch_bitset,
+						.bfs = &solver.bfs_stack,
+						.subgraph = &self.subgraph,
+						.node_tuples = solver.node_tuple,
+					};
+					ctx_min_sim.initAll();
+					for(0..3) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node),@TypeOf(ctx_min_sim), &ctx_node, &ctx_min_sim, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							final_tww = result;
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+					var ctx_new_reds = NodeScorerNewReds(T){};
+
+					
+					var node_edge_reducer = node_scorers.NodeScorerEdgeReducer(T){
+						.seq = &self.current_contraction_seq
+					};
+					for(0..5) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(node_edge_reducer),@TypeOf(ctx_score), &node_edge_reducer, &ctx_score, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							final_tww = result;
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+					
+
+					var ctx_min_sim_min = GraphScorerMinSim(T, .min) {
+						.visited = &solver.scratch_bitset,
+						.bfs = &solver.bfs_stack,
+						.subgraph = &self.subgraph,
+						.node_tuples = solver.node_tuple,
+					};
+					ctx_min_sim_min.initAll();
+					for(0..3) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node),@TypeOf(ctx_min_sim_min), &ctx_node, &ctx_min_sim_min, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							final_tww = result;
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+
+
+					var ctx_weighted_scorer_min = GraphScorerWeightedMinor(T){};
+					
+					var ctx_weighted_scorer = GraphScorerWeightedMajor(T){};
+					for(0..4) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_new_reds),@TypeOf(ctx_score), &ctx_new_reds, &ctx_score, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							final_tww = result;
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+
+					for(0..2) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node),@TypeOf(ctx_weighted_scorer_min), &ctx_node, &ctx_weighted_scorer_min, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							final_tww = result;
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+					
+					for(0..2) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node),@TypeOf(ctx_weighted_scorer), &ctx_node, &ctx_weighted_scorer, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							final_tww = result;
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+
+					var selector_simple = NodeScorerSimple(T){
+					};
+					for(0..2) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(selector_simple),@TypeOf(ctx_weighted_scorer), &selector_simple, &ctx_weighted_scorer, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							final_tww = result;
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+
+					var max_moves = node_scorers.NodeScorerMaximizeMoves(T){
+						.seq = &self.current_contraction_seq,
+						.subgraph = &self.subgraph,
+						.bfs = &solver.bfs_stack,
+						.visited = &solver.scratch_bitset,
+					};
+
+					var max_moves_scorer = graph_scorers.GraphScorerRemainingMoves(T, @TypeOf(max_moves)) {
+						.node_ctx = &max_moves,
+						.subgraph = &self.subgraph,
+						.bfs = &solver.bfs_stack,
+						.visited = &solver.scratch_bitset,
+					};
+
+					for(0..5) |i| {
+						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(max_moves),@TypeOf(max_moves_scorer), &max_moves, &max_moves_scorer, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
+						self.tww = result;
+						if(final_tww==null) {
+							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							final_tww = result;
+						}
+						else {
+							if(result < final_tww.?) {
+								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+							}
+							final_tww = std.math.min(result,final_tww.?);
+						}
+
+						try self.resetGraph();
+					}
+
+					return final_tww.?;
         }
 
         pub fn init(allocator: std.mem.Allocator, nodes: []T, bfs_level: u32, graph: *graph_mod.Graph(T)) !Self {

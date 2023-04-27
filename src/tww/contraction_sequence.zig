@@ -80,7 +80,7 @@ pub fn ContractionSequence(comptime T: type) type {
 	}
 
 	pub inline fn isComplete(self: *const Self) bool {
-		return (self.graph_size-1) == self.write_ptr;
+		return self.graph_size == self.write_ptr;
 	}
 
 	pub inline fn addContraction(self: *Self, contraction: Contraction(T)) ContractionError!void {

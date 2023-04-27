@@ -93,16 +93,12 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 			self.write_ptr += @boolToInt(!exists);
 		}
 
-		pub inline fn iterator(self: *Self, graph: *Graph(T), bs: *set.FastBitSet) !TopKScorerIterator {
+		pub inline fn iterator(self: *Self, graph: *Graph(T)) !TopKScorerIterator {
 			var index:u32 = 0;
 			for(self.node_list[0..self.write_ptr]) |item| {
 				// Compact node list
 				if(graph.erased_nodes.get(item)) {
-					self.node_list[index] = self.node_list[self.write_ptr-1];
-					index+=1;
-					self.write_ptr-=1;
-					_ = bs.unset(item);
-					continue;
+					@panic("There should never be erased nodes here!");
 				}
 				index+=1;
 				if(graph.node_list[item].cardinality() > 10000 and !graph.node_list[item].isLargeNode()) {
@@ -161,7 +157,7 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 				bs.unsetAll();
 			}
 			if (bs.cardinality != 0) {
-				std.debug.print("MAJOR ERROR\n", .{});
+				@panic("Bitset cardinality is not zero!");
 			}
 		}
 
@@ -183,12 +179,16 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 test "TopKScorer: Check top k scorer basics" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 	var topk = try TopKScorer(u16,1).init(gpa.allocator(),100);
+	var graph = try Graph(u16).new(10, gpa.allocator());
+	try graph.addEdge(2, 3);
+	try graph.addEdge(3, 4);
 	topk.reset();
 
 	topk.addVisit(2,false);
 	topk.addVisit(3,false);
+	topk.addVisit(3,true);
 
-	var topkiter = topk.iterator();
+	var topkiter = try topk.iterator(&graph);
 	const item = topkiter.next() orelse unreachable;
 	try std.testing.expectEqual(item,3);
 	try std.testing.expectEqual(topkiter.next(),null);

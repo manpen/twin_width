@@ -58,6 +58,12 @@ pub fn Graph(comptime T: type) type {
         // Main allocator is used to allocate everything that is needed at runtime.
         allocator: std.mem.Allocator,
 
+				started_at: std.time.Instant,
+
+
+				last_merge_first_level_merge: bool,
+				last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
+
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
         pub inline fn addEdge(self: *Self, u: T, v: T) !void {
@@ -549,6 +555,8 @@ pub fn Graph(comptime T: type) type {
                 return GraphError.MisformedEdgeList;
             }
 
+						self.last_merge_first_level_merge = false;
+						self.last_merge_red_edges_erased.shrinkRetainingCapacity(0);
 
             self.erased_nodes.set(erased);
             if (self.node_list[survivor].isLeaf()) {
@@ -566,11 +574,15 @@ pub fn Graph(comptime T: type) type {
                 if (item != survivor) {
                     if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
+												self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
                     } else {
                         // Inform about the removal of the red edge
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).redToDeleted(item));
                     }
                 }
+								else {
+									self.last_merge_first_level_merge = true;
+								}
             }
 
             var tww: T = 0;
@@ -581,6 +593,7 @@ pub fn Graph(comptime T: type) type {
 
             while (black_iter.next()) |item| {
                 if (item == survivor or item == erased) {
+										self.last_merge_first_level_merge = true;
                     continue;
                 }
                 // Came from erased
@@ -590,6 +603,7 @@ pub fn Graph(comptime T: type) type {
 
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
 
+												self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
                     }
                 }
                 // Came from survivor
@@ -702,6 +716,9 @@ pub fn Graph(comptime T: type) type {
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
                 .connected_components_node_list_slice = try allocator.alloc(T, number_of_nodes),
+								.started_at = try std.time.Instant.now(),
+								.last_merge_first_level_merge = false,
+								.last_merge_red_edges_erased = std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
             };
 
             return graph;
@@ -750,6 +767,9 @@ pub fn Graph(comptime T: type) type {
                 .connected_components_node_list_slice = try allocator.alloc(T, pace.number_of_nodes),
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
+								.started_at = try std.time.Instant.now(),
+								.last_merge_first_level_merge = false,
+								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
             };
         }
 

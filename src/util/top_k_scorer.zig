@@ -94,13 +94,12 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 		}
 
 		pub inline fn iterator(self: *Self, graph: *Graph(T)) !TopKScorerIterator {
-			var index:u32 = 0;
 			for(self.node_list[0..self.write_ptr]) |item| {
 				// Compact node list
 				if(graph.erased_nodes.get(item)) {
-					@panic("There should never be erased nodes here!");
+					continue;
+					//@panic("There should never be erased nodes here!");
 				}
-				index+=1;
 				if(graph.node_list[item].cardinality() > 10000 and !graph.node_list[item].isLargeNode()) {
 					try graph.node_list[item].promoteToLargeDegreeNode(graph);
 				}

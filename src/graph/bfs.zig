@@ -175,7 +175,7 @@ pub inline fn bfs_topk_high_performance_inner(comptime T: type, comptime K: u32,
 		// Prune large degree direct neighbors
     if (own_card > 100) {
 
-				var generator = std.rand.DefaultPrng.init(start_node+own_card);
+				var generator = std.rand.DefaultPrng.init(start_node+%own_card);
 				// Prune at most ~17% of direct neighbors for high degree nodes
         for (scorer.node_list[0..copy_frontier]) |id| {
 					if(generator.next() > std.math.maxInt(u64)/3) {

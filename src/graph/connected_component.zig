@@ -60,9 +60,17 @@ pub fn ConnectedComponent(comptime T: type) type {
         }
 
         pub fn solveSweepingTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T,K,P)) !T {
-					const result = try self.subgraph.solveSweepingSolverTopK(K,P,&self.current_contraction_seq,solver);
-					try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
-					self.tww = result;
+					var now = try std.time.Instant.now();
+					const time_passed = (now.since(self.subgraph.graph.started_at)/(1000*1000*1000));
+					// Graph 194 takes around ~16 Seconds to finish up 2x safety factor
+					if(time_passed >= 267) {
+						return std.math.maxInt(T);
+					}
+					const result = try self.subgraph.solveSweepingSolverTopK(K,P,&self.current_contraction_seq,solver,(267-time_passed));
+					if(result < self.tww) {
+						try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+						self.tww = result;
+					}
 					return result;
         }
 
@@ -71,11 +79,13 @@ pub fn ConnectedComponent(comptime T: type) type {
 					try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
 					self.tww = result;
 
-					if(self.tww < 300) {
-						try self.resetGraph();
-						const sweeping = try self.solveSweepingTopK(K,P,solver);
-						std.debug.print("Sweeping tww {}\n",.{sweeping});
-						result = std.math.min(result,sweeping);
+					if(self.tww < 200 or self.subgraph.nodes.len < 3700) {
+						if(self.subgraph.nodes.len > 2_000_000 and self.tww >= 90) {}
+						else {
+							try self.resetGraph();
+							const sweeping = try self.solveSweepingTopK(K,P,solver);
+							result = std.math.min(sweeping,result);
+						}
 					}
 					return result;
         }
@@ -255,36 +265,6 @@ pub fn ConnectedComponent(comptime T: type) type {
 						try self.resetGraph();
 					}
 
-					var max_moves = node_scorers.NodeScorerMaximizeMoves(T){
-						.seq = &self.current_contraction_seq,
-						.subgraph = &self.subgraph,
-						.bfs = &solver.bfs_stack,
-						.visited = &solver.scratch_bitset,
-					};
-
-					var max_moves_scorer = graph_scorers.GraphScorerRemainingMoves(T, @TypeOf(max_moves)) {
-						.node_ctx = &max_moves,
-						.subgraph = &self.subgraph,
-						.bfs = &solver.bfs_stack,
-						.visited = &solver.scratch_bitset,
-					};
-
-					for(0..5) |i| {
-						const result = try self.subgraph.solveGreedyLookahead(@TypeOf(max_moves),@TypeOf(max_moves_scorer), &max_moves, &max_moves_scorer, K, @intCast(T,i),&self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-						self.tww = result;
-						if(final_tww==null) {
-							try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
-							final_tww = result;
-						}
-						else {
-							if(result < final_tww.?) {
-								try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
-							}
-							final_tww = std.math.min(result,final_tww.?);
-						}
-
-						try self.resetGraph();
-					}
 
 					return final_tww.?;
         }

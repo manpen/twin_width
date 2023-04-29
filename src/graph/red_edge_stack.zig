@@ -74,7 +74,6 @@ pub fn RedEdgeStack(comptime T: type) type {
         }
 
         pub fn initCapacity(allocator: std.mem.Allocator, capacity: u32) !Self {
-            std.debug.assert(capacity > 0);
             var size = std.ArrayListUnmanaged(u32){};
             try size.append(allocator, 0);
 

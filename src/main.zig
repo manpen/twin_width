@@ -31,10 +31,10 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
 	};
 
 
-	//const formatted = try std.fmt.allocPrint(node_allocator,"{s}.solution",.{filename});
-	//defer node_allocator.free(formatted);
-	//try loaded_graph.contraction.seq.writeSolution(formatted);
-	//std.debug.print("Wrote solution to {s}\n",.{formatted});
+	const formatted = try std.fmt.allocPrint(loaded_graph.allocator,"{s}.solution",.{filename});
+	defer loaded_graph.allocator.free(formatted);
+	try loaded_graph.contraction.writeSolution(formatted);
+	std.debug.print("Wrote solution to {s}\n",.{formatted});
 
 	//TODO: Check these instances again
 	//REALLY SLOW: heuristic_122.gr better but still ~550 sec heuristic_136.gr slow too.
@@ -146,6 +146,20 @@ pub fn main() !void {
 		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_180.gr","heuristic_180.gr");
 		//hpa_allocator.reset();
 
+		// Not best instances/heuristic-public/heuristic_174.gr.solution
+
+		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_174.gr","heuristic_174.gr");
+		//hpa_allocator.reset();
+
+		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_192.gr","heuristic_192.gr");
+		//hpa_allocator.reset();
+
+		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_138.gr","heuristic_138.gr");
+		//hpa_allocator.reset();
+
+		_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_194.gr","heuristic_194.gr");
+		hpa_allocator.reset();
+
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);
 		while(try dirit.next()) |item| {
 			if(item.kind == .File) {
@@ -163,7 +177,6 @@ pub fn main() !void {
 			defer allocator.free(complete_name);
 
 			cumulative += try initial_solver(hpa,complete_name,name);
-			std.debug.print("Cumulative {}\n",.{cumulative});
 			hpa_allocator.reset();
 		}
 

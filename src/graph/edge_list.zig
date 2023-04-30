@@ -98,7 +98,6 @@ pub fn ParametrizedSortedArrayList(comptime T: type) type {
 		const Self = @This();
 		edges: std.ArrayListUnmanaged(T),
 		pub inline fn initCapacity(allocator: std.mem.Allocator, size: u32) !Self {
-			std.debug.assert(size>0);
 			var list = try std.ArrayListUnmanaged(T).initCapacity(allocator,size);
 
 			return Self {

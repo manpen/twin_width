@@ -157,7 +157,9 @@ pub fn main() !void {
 		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_138.gr","heuristic_138.gr");
 		//hpa_allocator.reset();
 
-		_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_194.gr","heuristic_194.gr");
+		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_114.gr","heuristic_114.gr");
+		//hpa_allocator.reset();
+		_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_158.gr","heuristic_158.gr");
 		hpa_allocator.reset();
 
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);

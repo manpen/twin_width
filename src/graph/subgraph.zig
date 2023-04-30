@@ -362,6 +362,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 					var max_backtracks:u32 = 10000;
 					var generator = std.rand.DefaultPrng.init(seed);
 
+					// Here is somewehere another error
 					while(!seq.isComplete()) {
 						seed+=17;
 						var move = try self.findOneMoveBelowUpperBound(bfs_queue,visited,upper_bound, seed);
@@ -631,13 +632,51 @@ pub fn InducedSubGraph(comptime T: type) type {
 					}
 				};
 
+				pub fn solveFoldingSingleNode(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
+				    
+            var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
+            if (contractions_left == 0) return 0;
 
-				pub fn solveSweepingSolverTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), budget_secs: u64) !T {
+						var generator = std.rand.DefaultPrng.init(23);
+						min_hash.fisher_yates_shuffle(T,self.nodes[0..self.nodes.len], &generator);
+						
+						var min_node:T = 0;
+						var min_tww:T = std.math.maxInt(T);
+
+
+						for(0..std.math.min(self.nodes.len,1000)) |i| {
+							const item = self.nodes[i];
+
+              solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+
+							// Select greedy
+              var selection = try self.selectBestMove(K, P, item, solver, 0);
+							if(selection.potential.tww < min_tww) {
+								min_node = item;
+								min_tww = selection.potential.tww;
+							}
+						}
+
+						while(contractions_left > 0) {
+              solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+
+							// Select greedy
+              var selection = try self.selectBestMove(K, P, min_node, solver, 0);
+							_ = try self.graph.addContraction(selection.target, min_node, seq);
+							contractions_left-=1;
+							std.debug.print("Folding contractions left {} tww {}\n",.{contractions_left, seq.getTwinWidth()});
+						}
+
+						return seq.getTwinWidth();
+				}
+
+				pub fn solveSweepingSolverTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), budget_secs: u64, probing: bool) !T {
             solver.scratch_bitset.unsetAll();
             var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
             if (contractions_left == 0) return 0;
             var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
             _ = min_contraction;
+						// Should be zero which leads in the best move selection to always greedily choose the better twin width rather than the better potential
             var total_tww: T = seq.getTwinWidth();
 						
 						var start_time = try std.time.Instant.now();
@@ -645,11 +684,14 @@ pub fn InducedSubGraph(comptime T: type) type {
 
 						var priority_queue = std.PriorityQueue(TwinWidthPriorityWithContraction,void,TwinWidthPriorityWithContraction.compare).init(self.graph.allocator,{});
 						defer priority_queue.deinit();
+
+						// This is an overestimation can be cut down to N/(2*log(N))
 						try priority_queue.ensureTotalCapacity(self.nodes.len);
 
+						//try self.reduceLeafesAndPaths(K,P,seq,solver,false);
 						var remaining_nodes:T = 0;
 						for(self.nodes) |n| {
-							if(self.graph.erased_nodes.get(n)) @panic("No nodes erased at start");
+							if(self.graph.erased_nodes.get(n)) @panic("Should never happen!");
 							solver.scratch_node_list[remaining_nodes] = n;
 							remaining_nodes+=1;
 						}
@@ -660,6 +702,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 						//heuristic_128.gr
 
 						
+						var first_iteration: bool = true;
             outer: while (contractions_left > 0) {
 							priority_queue.len = 0;
 							var total_contractions:u32 = 0;
@@ -679,6 +722,9 @@ pub fn InducedSubGraph(comptime T: type) type {
 							}
 
 							var min_tww: T = std.math.maxInt(T);
+							var max_tww:T = 0;
+							var cumulative_tww:u64 = 0;
+							var visited:u32 = 0;
 
 							// Need overflow
 							var index:i32 = 0;
@@ -702,6 +748,9 @@ pub fn InducedSubGraph(comptime T: type) type {
 								solver.node_mask_bitset.set(item);
 								solver.node_mask_bitset.set(selection.target);
 								min_tww = std.math.min(min_tww,selection.potential.tww);
+								max_tww = std.math.max(max_tww,selection.potential.tww);
+								cumulative_tww += selection.potential.tww;
+								visited+=1;
 								if(priority_queue.count() < sqrt) {
 									try priority_queue.add(TwinWidthPriorityWithContraction {
 											.tww = selection.potential.tww,
@@ -715,6 +764,9 @@ pub fn InducedSubGraph(comptime T: type) type {
 
 								if(index == sample_amount) {
 									sweeping_thresh = std.math.max(sweeping_thresh,min_tww);
+									if(first_iteration) {
+										if(probing and (((cumulative_tww/visited) > 50) or max_tww > 50)) return std.math.maxInt(T);
+									}
 								}
 
 								if(index&0x800 > 0) {
@@ -724,6 +776,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 									}
 								}
 							}
+							first_iteration = false;
 
 							
 							if(total_contractions < sqrt) {

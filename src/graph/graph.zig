@@ -275,6 +275,24 @@ pub fn Graph(comptime T: type) type {
                     }
                 }
             }
+
+						pub inline fn isLessDeltaRedEdgesMajor(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) bool {
+                if (self.tww >= current_twin_width or other.tww >= current_twin_width) {
+                    if (self.tww < other.tww or (self.tww == other.tww and self.delta_red_edges < other.delta_red_edges)) {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                } else {
+                    if (self.delta_red_edges < other.delta_red_edges) {
+                        return true;
+                    } else if (self.delta_red_edges == other.delta_red_edges) {
+                        return self.cumulative_red_edges < other.cumulative_red_edges;
+                    } else {
+                        return false;
+                    }
+                }
+            }
         };
 
 				pub fn calculateMaxTwwOfNewNeighbors(self: *Self, erased: T, survivor: T) T {
@@ -718,7 +736,7 @@ pub fn Graph(comptime T: type) type {
                 .connected_components_node_list_slice = try allocator.alloc(T, number_of_nodes),
 								.started_at = try std.time.Instant.now(),
 								.last_merge_first_level_merge = false,
-								.last_merge_red_edges_erased = std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
+								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
             };
 
             return graph;
@@ -824,6 +842,7 @@ pub fn Graph(comptime T: type) type {
             self.allocator.free(self.connected_components_node_list_slice);
             self.scratch_bitset.deinit(self.allocator);
             self.erased_nodes.deinit(self.allocator);
+						self.last_merge_red_edges_erased.deinit(self.allocator);
             self.allocator.free(self.node_list);
         }
     };

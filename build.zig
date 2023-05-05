@@ -21,11 +21,10 @@ pub fn build(b: *std.Build) void {
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
-        .optimize = optimize
+        .optimize = optimize,
     });
-		exe.single_threaded = true;
-		exe.addIncludePath("src/tww");
-
+    exe.single_threaded = true;
+    exe.addIncludePath("src/tww");
 
     const sub = b.addExecutable(.{
         .name = "solver",
@@ -33,27 +32,26 @@ pub fn build(b: *std.Build) void {
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/submission.zig" },
         .target = target,
-        .optimize = optimize
+        .optimize = optimize,
     });
-		sub.single_threaded = true;
-		sub.addIncludePath("src/tww");
-		sub.install();
+    sub.single_threaded = true;
+    sub.addIncludePath("src/tww");
+    b.installArtifact(sub);
 
-		const run_sub = sub.run();
-		run_sub.step.dependOn(b.getInstallStep());
+    const run_sub = b.addRunArtifact(sub);
+    run_sub.step.dependOn(b.getInstallStep());
     const solver_step = b.step("solver", "Compile solver for submission");
-		solver_step.dependOn(b.getInstallStep());
-
+    solver_step.dependOn(b.getInstallStep());
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
-    exe.install();
+    b.installArtifact(exe);
 
     // This *creates* a RunStep in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.
-    const run_cmd = exe.run();
+    const run_cmd = b.addRunArtifact(exe);
 
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
@@ -79,18 +77,18 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-		exe_tests.addIncludePath("src/tww");
+    exe_tests.addIncludePath("src/tww");
 
     const exe_bench = b.addTest(.{
-				.name = "zig_bench",
+        .name = "zig_bench",
         .root_source_file = .{ .path = "src/bench.zig" },
         .target = target,
         .optimize = .ReleaseFast,
     });
-		exe_bench.test_runner = "src/bench.zig";
-		exe_bench.addIncludePath("src/tww");
+    exe_bench.test_runner = "src/bench.zig";
+    exe_bench.addIncludePath("src/tww");
 
-		const run_bench_step = exe_bench.run();
+    const run_bench_step = b.addRunArtifact(exe_bench);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request

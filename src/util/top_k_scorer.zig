@@ -40,10 +40,10 @@ pub fn TopKScorer(comptime T: type, comptime K: u32) type {
 
 		pub fn init(allocator: std.mem.Allocator, total_number_of_nodes: T) !Self {
 			var memory = try allocator.alloc(i32, total_number_of_nodes);
-			std.mem.set(i32, memory,0);
+			@memset(memory,0);
 
 			var nodel = try allocator.alloc(T, total_number_of_nodes+1);
-			std.mem.set(T, nodel,0);
+			@memset(nodel,0);
 			
 			var priority_queue = std.PriorityQueue(TopKQueueEntry,void, entryCompareFn).init(allocator,{});
 

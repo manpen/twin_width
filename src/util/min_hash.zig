@@ -98,7 +98,7 @@ pub fn MinHashBand(comptime T: type, comptime N: u32, comptime promote_thresh:u3
 
 		pub inline fn init(allocator: std.mem.Allocator, number_of_nodes: u32) !Self {
 			var alloc = try allocator.alloc(u3,number_of_nodes);
-			std.mem.set(u3,alloc,0);
+			@memset(alloc,0);
 
 			var hb = Self {
 				.hashes = undefined,

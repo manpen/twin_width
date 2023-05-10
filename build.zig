@@ -43,6 +43,23 @@ pub fn build(b: *std.Build) void {
     const solver_step = b.step("solver", "Compile solver for submission");
     solver_step.dependOn(b.getInstallStep());
 
+    const main_exact = b.addExecutable(.{
+        .name = "main_exact",
+        // In this case the main source file is merely a path, however, in more
+        // complicated build scripts, this could be a generated file.
+        .root_source_file = .{ .path = "src/main_exact.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    main_exact.single_threaded = true;
+    main_exact.addIncludePath("src/tww");
+    b.installArtifact(main_exact);
+
+    const run_main_exact = b.addRunArtifact(main_exact);
+    run_main_exact.step.dependOn(b.getInstallStep());
+    const main_exact_step = b.step("main_exact", "Compile main_exact");
+    main_exact_step.dependOn(b.getInstallStep());
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).

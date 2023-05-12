@@ -191,7 +191,7 @@ pub fn GraphScorerMinSim(comptime T: type, comptime options: MinSimType) type {
         pub const ScoreType = struct { T, u32 };
 
 				pub fn initAll(self: *@This()) void {
-					std.mem.set(NodeTuple(T), self.node_tuples, NodeTuple(T) {.first = 0,.second = 0});
+					@memset(self.node_tuples, NodeTuple(T) {.first = 0,.second = 0});
 				}
         pub fn setUpperBound(own: *@This(), bound: T) void {
             own.upper_bound = bound;

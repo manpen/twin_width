@@ -70,8 +70,8 @@ pub const FastBitSet = struct {
 			errdefer allocator.free(storage);
 			var storage_higher = try allocator.alloc(u64,ensure_higher);
 			errdefer allocator.free(storage_higher);
-			std.mem.set(u64,storage,0);
-			std.mem.set(u64,storage_higher,0);
+			@memset(storage,0);
+			@memset(storage_higher,0);
 
 			return Self {
 				.storage = storage,
@@ -88,8 +88,8 @@ pub const FastBitSet = struct {
 			errdefer allocator.free(storage);
 			var storage_higher = try allocator.alloc(u64,ensure_higher);
 			errdefer allocator.free(storage_higher);
-			std.mem.set(u64,storage,0xFFFFFFFFFFFFFFFF);
-			std.mem.set(u64,storage_higher,0xFFFFFFFFFFFFFFFF);
+			@memset(storage,0xFFFFFFFFFFFFFFFF);
+			@memset(storage_higher,0xFFFFFFFFFFFFFFFF);
 
 			return Self {
 				.storage = storage,
@@ -201,8 +201,8 @@ pub const FastBitSet = struct {
 
 		pub inline fn unsetAll(self: *Self) void {
 			if(self.cardinality > 0) {
-				std.mem.set(u64,self.storage,0);
-				std.mem.set(u64,self.storage_higher,0);
+				@memset(self.storage,0);
+				@memset(self.storage_higher,0);
 				self.cardinality = 0;
 			}
 		}

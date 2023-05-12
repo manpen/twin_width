@@ -20,6 +20,7 @@ pub const Color = enum {
 pub fn MatrixGraph(comptime num_nodes: u32) type {
     return struct {
         const Self = @This();
+        pub const numNodes: u32 = num_nodes;
         pub const Node = u32;
         pub const BitSet = FixedSizeSet(num_nodes);
 
@@ -36,12 +37,12 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             return graph;
         }
 
-        pub inline fn number_of_nodes(self: *Self) Node {
+        pub inline fn numberOfNodes(self: *const Self) Node {
             _ = self;
             return num_nodes;
         }
 
-        pub inline fn number_of_edges(self: *Self) u32 {
+        pub inline fn numberOfEdges(self: *const Self) u32 {
             return self.num_edges;
         }
 
@@ -228,13 +229,11 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             var num_edges: u32 = 0;
             var u: Node = 0;
 
-            while (u < self.number_of_nodes()) : (u += 1) {
-                assert(!self.constNeighbors(u).isSet(u));
-
+            while (u < self.numberOfNodes()) : (u += 1) {
                 var v: Node = u;
 
                 assert(self.constRedNeighbors(u).is_subset_of(self.constNeighbors(u)));
-                while (v < self.number_of_nodes()) : (v += 1) {
+                while (v < self.numberOfNodes()) : (v += 1) {
                     assert(self.constNeighbors(u).isSet(v) == self.constNeighbors(v).isSet(u));
                     assert(self.constRedNeighbors(u).isSet(v) == self.constRedNeighbors(v).isSet(u));
                 }
@@ -249,13 +248,13 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
 
 test "New Matrix Graph" {
     var graph = MatrixGraph(100).new();
-    assert(graph.number_of_nodes() == 100);
-    assert(graph.number_of_edges() == 0);
+    assert(graph.numberOfNodes() == 100);
+    assert(graph.numberOfEdges() == 0);
 }
 
 test "Add Edge" {
     var graph = MatrixGraph(100).new();
-    assert(graph.number_of_edges() == 0);
+    assert(graph.numberOfEdges() == 0);
     assert(graph.addEdge(0, 1, Color.Black) == null);
     assert(graph.addEdge(1, 0, Color.Black) == Color.Black);
 
@@ -272,24 +271,24 @@ test "Add Edge" {
     assert(graph.redNeighbors(1).cardinality() == 1);
 
     assert(graph.addEdge(0, 1, Color.Red) == Color.Red);
-    assert(graph.number_of_edges() == 1);
+    assert(graph.numberOfEdges() == 1);
 
     assert(graph.addEdge(1, 1, Color.Black) == null);
-    assert(graph.number_of_edges() == 2);
+    assert(graph.numberOfEdges() == 2);
 }
 
 test "Remove Edge" {
     var graph = MatrixGraph(100).new();
 
-    assert(graph.number_of_edges() == 0);
+    assert(graph.numberOfEdges() == 0);
     assert(graph.addEdge(0, 1, Color.Black) == null);
     assert(graph.removeEdge(0, 3) == null);
-    assert(graph.number_of_edges() == 1);
+    assert(graph.numberOfEdges() == 1);
     assert(graph.removeEdge(1, 0) == Color.Black);
-    assert(graph.number_of_edges() == 0);
+    assert(graph.numberOfEdges() == 0);
 
     assert(graph.removeEdge(0, 2) == null);
-    assert(graph.number_of_edges() == 0);
+    assert(graph.numberOfEdges() == 0);
 }
 
 test "Merge" {

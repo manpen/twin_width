@@ -1,5 +1,9 @@
 const std = @import("std");
 const mg = @import("matrix_graph.zig");
+const bs = @import("bootstrapping.zig");
+const subgraph = @import("../graph/subgraph.zig");
+const cc = @import("../graph/connected_component.zig");
+const contr = @import("../tww/contraction_sequence.zig");
 
 const assert = std.debug.assert;
 
@@ -23,6 +27,7 @@ pub const ExactBranchAndBound = struct {
     best_seq: std.ArrayList(Contraction),
 
     num_calls: u64,
+    recursion_depth: usize,
 
     pub fn new(allocator: std.mem.Allocator, number_of_nodes: Node) !Self {
         var working_seq = try std.ArrayList(Contraction).initCapacity(allocator, number_of_nodes);
@@ -31,7 +36,7 @@ pub const ExactBranchAndBound = struct {
         var best_seq = try std.ArrayList(Contraction).initCapacity(allocator, number_of_nodes);
         errdefer best_seq.deinit();
 
-        var solver = Self{ .allocator = allocator, .lower = 0, .upper_excl = number_of_nodes, .number_of_nodes = number_of_nodes, .working_seq = working_seq, .best_seq = best_seq, .num_calls = 0 };
+        var solver = Self{ .allocator = allocator, .lower = 0, .upper_excl = number_of_nodes, .number_of_nodes = number_of_nodes, .working_seq = working_seq, .best_seq = best_seq, .num_calls = 0, .recursion_depth = 0 };
 
         return solver;
     }
@@ -46,14 +51,18 @@ pub const ExactBranchAndBound = struct {
         self.upper_excl = ub;
     }
 
-    pub fn number_of_recursive_calls(self: *Self) u64 {
+    pub fn numberOfRecursiveCalls(self: *Self) u64 {
         return self.num_calls;
     }
 
-    pub fn solve(self: *Self, comptime Graph: type, graph: Graph, slack: Node) anyerror!Node {
+    pub fn solve(self: *Self, comptime Graph: type, graph: *const Graph, slack: Node) anyerror!Node {
         self.num_calls += 1;
-        var frame = Frame(Graph).new(self, graph, slack);
-        return frame.run();
+        self.recursion_depth += 1;
+        std.debug.print("Depth: {d}\n", .{self.recursion_depth});
+        var frame = Frame(Graph).new(self, graph.*, slack);
+        var result = frame.run();
+        self.recursion_depth -= 1;
+        return result;
     }
 
     pub fn deinit(self: *Self) void {
@@ -87,7 +96,7 @@ fn Frame(comptime Graph: type) type {
                 return SolverError.Infeasable;
             }
 
-            if (self.graph.number_of_edges() == 0) {
+            if (self.graph.numberOfEdges() == 0) {
                 std.debug.print("Found a solution with tww={d}\n", .{self.slack});
 
                 self.context.upper_excl = self.slack;
@@ -119,7 +128,7 @@ fn Frame(comptime Graph: type) type {
 
                 _ = try self.eliminate_leafs(&local_graph);
 
-                const tww_from_recursion = self.context.solve(@TypeOf(local_graph), local_graph, tww) catch continue;
+                const tww_from_recursion = self.context.solve(@TypeOf(local_graph), &local_graph, tww) catch continue;
                 std.debug.assert(tww_from_recursion >= tww);
 
                 result = tww_from_recursion;
@@ -133,12 +142,12 @@ fn Frame(comptime Graph: type) type {
         }
 
         fn compute_candidates(self: *Self) !std.ArrayList(ContraScore) {
-            var result = try std.ArrayList(ContraScore).initCapacity(self.context.allocator, self.graph.number_of_nodes());
+            var result = try std.ArrayList(ContraScore).initCapacity(self.context.allocator, self.graph.numberOfNodes());
             errdefer result.deinit();
 
             var nodes = self.graph.has_neighbors;
             var u: Node = 0;
-            while (u < self.graph.number_of_nodes()) : (u += 1) {
+            while (u < self.graph.numberOfNodes()) : (u += 1) {
                 if (!nodes.unsetBit(u)) {
                     std.debug.assert(self.graph.deg(u) == 0);
                     continue;
@@ -174,7 +183,7 @@ fn Frame(comptime Graph: type) type {
         fn eliminate_leafs(self: *Self, graph: *Graph) !bool {
             var leafs = Graph.BitSet.new();
             var u: Node = 0;
-            while (u < graph.number_of_nodes()) : (u += 1) {
+            while (u < graph.numberOfNodes()) : (u += 1) {
                 if (graph.deg(u) == 1) {
                     _ = leafs.setBit(u);
                 }
@@ -186,7 +195,7 @@ fn Frame(comptime Graph: type) type {
 
             u = 0;
             var change = false;
-            while (u < graph.number_of_nodes()) : (u += 1) {
+            while (u < graph.numberOfNodes()) : (u += 1) {
                 if (self.graph.deg(u) < 2) {
                     continue;
                 }
@@ -208,6 +217,57 @@ fn Frame(comptime Graph: type) type {
             return change;
         }
     };
+}
+
+fn solveCCContext(comptime T: type) type {
+    return struct {
+        const IntType = T;
+
+        cc: *cc.ConnectedComponent(T),
+        allocator: std.mem.Allocator,
+        lower: Node,
+        upper: Node,
+        result: anyerror!Node,
+    };
+}
+
+pub fn solveCCExactly(comptime T: type, component: *cc.ConnectedComponent(T), allocator: std.mem.Allocator, lower: Node, upper: Node) !Node {
+    const ContextType = solveCCContext(T);
+    var context = ContextType{ .cc = component, .allocator = allocator, .lower = lower, .upper = upper, .result = upper + 1 };
+    try bs.matrixGraphFromInducedSubGraph(T, &component.subgraph, &context, solveCCExactlyHandler);
+    return context.result;
+}
+
+fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) void {
+    const T = @TypeOf(context.*).IntType;
+
+    std.debug.print("Invoke exact solver on n={d}, m={d}, lower={d}, upper={d}", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges(), context.lower, context.upper });
+
+    var solver = ExactBranchAndBound.new(context.allocator, graph.numberOfNodes()) catch |e| {
+        context.result = e;
+        return;
+    };
+    defer solver.deinit();
+
+    solver.setLowerBound(context.lower);
+    solver.setUpperBound(context.upper);
+
+    var tww = solver.solve(@TypeOf(graph), &graph, 0) catch |e| {
+        context.result = e;
+        return;
+    };
+
+    context.result = tww;
+
+    // update CC
+    context.cc.tww = @intCast(T, tww);
+    var cs = &context.cc.best_contraction_sequence;
+    cs.reset();
+
+    const OuterContraction = contr.Contraction(T);
+    for (solver.best_seq.items) |ctr| {
+        cs.addContraction(OuterContraction{ .erased = @intCast(T, mapping[ctr.rem]), .survivor = @intCast(T, mapping[ctr.sur]) }) catch unreachable;
+    }
 }
 
 test "Init BB solver" {

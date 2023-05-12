@@ -6,7 +6,6 @@ const empty_sigset = os.empty_sigset;
 const SIGTERM: u6 = 15;
 const BUF_SIZE = 32768;
 
-pub var done: bool = false;
 var cc_slice: [][]u32  = undefined;
 
 // Writes the current solution of cc_slice into stdout. errors all all discarded, due to callconv(.C)
@@ -31,7 +30,7 @@ fn handle_sigterm(_: c_int) callconv(.C) void {
         i+=1;
     }
     buffered.flush() catch {};
-    done = true;
+    os.exit(0);
 }
 
 const act = Sigaction {
@@ -46,7 +45,6 @@ const act = Sigaction {
 // for all i < S.len - 1 and i%2==0.
 // vertices are expected to start at 0 and end at n-1.
 pub fn initialize_signal_handler(init_cc_slice: [][]u32) void {
-    done = false;
     cc_slice = init_cc_slice;
     _ = sigaction(SIGTERM, &act, null);
 }

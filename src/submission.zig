@@ -24,16 +24,13 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
 }
 
 pub fn main() !void {
-    // simple test for signal handler
+    //simple test for signal handler
     // var test_data1 = [_]u32{0, 1, 2, 3, 4, 2};
     // var test_data2 = [_]u32{11, 12, 13, 14, 12, 15, 77, 89, 11, 39};
     // var multi_dimensional_test_data = [_][]u32{test_data1[0..], test_data2[0..]};
     // signal_handler.initialize_signal_handler(multi_dimensional_test_data[0..]);
     // std.debug.print("Starting pid {d}\n\n", .{std.os.linux.getpid()});
     // while (true) {
-    //     if (signal_handler.done) {
-    //         return;
-    //     }
     //     test_data1 = [_]u32{14, 1, 2, 3, 4, 52};
     // }
 

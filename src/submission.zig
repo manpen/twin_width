@@ -18,15 +18,12 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
 	defer loaded_graph.deinit();
 
 	signal_handler.initialize_signal_handler(try loaded_graph.findAllConnectedComponents());
-	std.debug.print("Initialized signal handler. the pid is: {d}\n\n", .{std.os.linux.getpid()});
+	//std.debug.print("Initialized signal handler. the pid is: {d}\n", .{std.os.linux.getpid()});
 	_ = loaded_graph.solveGreedy() catch |err| {
 		std.debug.print("Error {}\n",.{err});
 		return err;
 	};
-	std.debug.print("Finished solving, entering infinite loop and waiting for SIGTERM.\n", .{});
-	std.debug.print("Printing old solution writer.\n", .{});
-	try loaded_graph.contraction.writeSolutionToStdout();
-	std.debug.print("\nDone.\n", .{});
+	//std.debug.print("Finished solving, entering infinite loop and waiting for SIGTERM.\n", .{});
 	//try loaded_graph.contraction.writeSolutionToStdout();
 	// loop until signal received, dump results via signal handler
 	while(heuristic) {}

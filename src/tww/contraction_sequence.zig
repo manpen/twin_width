@@ -117,6 +117,16 @@ pub fn ContractionSequence(comptime T: type) type {
 			try std.fmt.format(writer,"{d} {d}\n",.{seq.survivor+1,seq.erased+1});
 		}
 	}
+
+	pub inline fn write_to_slice(self: *Self, slice: []u32) void {
+	    var iterate_seq = self.iterator();
+	    var j: usize = 0;
+	    while(iterate_seq.next()) |seq| {
+	        slice[j]=@as(u32, seq.survivor);
+	        slice[j+1]=@as(u32, seq.erased);
+	        j+=2;
+        }
+	}
 	
 	pub inline fn writeSolutionToStdout(self: *Self) !void {
 		var file = std.io.getStdOut();

@@ -5,6 +5,8 @@ const pace = @import("pace_2023/pace_fmt.zig");
 const builtin = @import("builtin");
 const signal_handler = @import("util/signal_handler.zig");
 
+const heuristic: bool = true;
+
 pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocator, pace_header: pace.PaceProblem2023) !void {
 	var pace_inst = try pace.Pace2023Fmt(T).fromStdin(allocator,pace_header);
 	defer pace_inst.deinit(allocator);
@@ -15,12 +17,19 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
 	};
 	defer loaded_graph.deinit();
 
-	try loaded_graph.findAllConnectedComponents();
+	signal_handler.initialize_signal_handler(try loaded_graph.findAllConnectedComponents());
+	std.debug.print("Initialized signal handler. the pid is: {d}\n\n", .{std.os.linux.getpid()});
 	_ = loaded_graph.solveGreedy() catch |err| {
 		std.debug.print("Error {}\n",.{err});
 		return err;
 	};
+	std.debug.print("Finished solving, entering infinite loop and waiting for SIGTERM.\n", .{});
+	std.debug.print("Printing old solution writer.\n", .{});
 	try loaded_graph.contraction.writeSolutionToStdout();
+	std.debug.print("\nDone.\n", .{});
+	//try loaded_graph.contraction.writeSolutionToStdout();
+	// loop until signal received, dump results via signal handler
+	while(heuristic) {}
 }
 
 pub fn main() !void {

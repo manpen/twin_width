@@ -58,11 +58,11 @@ pub fn Graph(comptime T: type) type {
         // Main allocator is used to allocate everything that is needed at runtime.
         allocator: std.mem.Allocator,
 
-				started_at: std.time.Instant,
+        started_at: std.time.Instant,
 
 
-				last_merge_first_level_merge: bool,
-				last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
+        last_merge_first_level_merge: bool,
+        last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
@@ -791,7 +791,7 @@ pub fn Graph(comptime T: type) type {
             };
         }
 
-        pub fn findAllConnectedComponents(self: *Self) !void {
+        pub fn findAllConnectedComponents(self: *Self) ![][]u32 {
             self.scratch_bitset.unsetAll();
 
             var bfs_stack = try bfs_mod.BfsQueue(T).init(self.allocator, self.number_of_nodes);
@@ -819,6 +819,14 @@ pub fn Graph(comptime T: type) type {
                 current_slice_start = current_slice_ptr;
             }
 
+            // construct solution tracking
+            var cc_solutions = try self.allocator.alloc([]u32, components);
+            var i: usize = 0;
+            while (i < components) {
+                cc_solutions[i]=self.connected_components.items[i].contraction_slice;
+                i+=1;
+            }
+
             try self.connected_components_min_heap.ensureTotalCapacity(self.connected_components.items.len);
             for (0..self.connected_components.items.len) |index| {
                 try self.connected_components_min_heap.add(connected_components.ConnectedComponentIndex(T){ .tww = self.connected_components.items[index].tww, .index = @intCast(T, index) });
@@ -827,6 +835,7 @@ pub fn Graph(comptime T: type) type {
             var tww = self.connected_components_min_heap.remove();
             //std.debug.print("Found {} components largest {} and tww {} density {}\n", .{ components, largest, tww.tww, self.density() });
             try self.connected_components_min_heap.add(tww);
+            return cc_solutions;
         }
 
         pub fn deinit(self: *Self) void {

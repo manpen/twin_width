@@ -24,7 +24,7 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
 	};
 	defer loaded_graph.deinit();
 
-	try loaded_graph.findAllConnectedComponents();
+	_ = try loaded_graph.findAllConnectedComponents();
 	const tww = loaded_graph.solveGreedy() catch |err| {
 		std.debug.print("Error {}\n",.{err});
 		return err;

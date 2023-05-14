@@ -1,6 +1,9 @@
 const std = @import("std");
 
 pub fn FixedSizeSet(comptime size: usize) type {
+    const storeCardByDefault = true;
+    _ = storeCardByDefault;
+
     if (size <= 8) {
         return FixedSizeSetImpl(u8, size, false);
     }
@@ -17,7 +20,7 @@ pub fn FixedSizeSet(comptime size: usize) type {
         return FixedSizeSetImpl(u64, size, false);
     }
 
-    return FixedSizeSetImpl(u64, size, (size > 128));
+    return FixedSizeSetImpl(u64, size, false or (size > 128));
 }
 
 fn log2Type(comptime T: type) type {
@@ -32,6 +35,14 @@ fn log2Type(comptime T: type) type {
 
 fn FixedSizeSetImpl(comptime T: type, comptime size: usize, comptime store_cardinality: bool) type {
     const N = comptime (size + @bitSizeOf(T) - 1) / @bitSizeOf(T);
+    const Zero = @as(T, 0);
+    const One = @as(T, 1);
+
+    const maskLastWord = if (size % @bitSizeOf(T) == 0)
+        ~Zero
+    else
+        (One << @intCast(log2Type(T), size % @bitSizeOf(T))) - One;
+
     const Container = comptime if (store_cardinality) struct { data: [N]T, card: u32 } else struct { data: [N]T };
 
     return struct {
@@ -41,6 +52,12 @@ fn FixedSizeSetImpl(comptime T: type, comptime size: usize, comptime store_cardi
 
         pub fn new() Self {
             return Self{ .container = comptime if (store_cardinality) Container{ .data = [_]T{0} ** N, .card = 0 } else Container{ .data = [_]T{0} ** N } };
+        }
+
+        pub fn newAllSet() Self {
+            var me = Self{ .container = comptime if (store_cardinality) Container{ .data = [_]T{~Zero} ** N, .card = size } else Container{ .data = [_]T{~Zero} ** N } };
+            me.container.data[N - 1] = maskLastWord;
+            return me;
         }
 
         pub fn new_with_bits_set(bits: []const u32) Self {
@@ -127,7 +144,7 @@ fn FixedSizeSetImpl(comptime T: type, comptime size: usize, comptime store_cardi
             const L = log2Type(T);
             const bit_idx = @intCast(L, idx % @bitSizeOf(T));
 
-            const mask: T = @as(T, 1) << bit_idx;
+            const mask: T = One << bit_idx;
 
             return 0 != (self.container.data[word_idx] & mask);
         }
@@ -138,7 +155,7 @@ fn FixedSizeSetImpl(comptime T: type, comptime size: usize, comptime store_cardi
             const L = log2Type(T);
             const bit_idx = @intCast(L, idx % @bitSizeOf(T));
 
-            const mask: T = @as(T, 1) << bit_idx;
+            const mask: T = One << bit_idx;
 
             var word = self.container.data[word_idx];
 
@@ -153,6 +170,31 @@ fn FixedSizeSetImpl(comptime T: type, comptime size: usize, comptime store_cardi
             }
 
             return previous;
+        }
+
+        pub inline fn moveBitAndUnset(self: *Self, src: u32, dst: u32) void {
+            const src_word: *T = &self.container.data[src / @bitSizeOf(T)];
+            var dst_word: *T = &self.container.data[dst / @bitSizeOf(T)];
+
+            const L = log2Type(T);
+            const src_bit_idx = @intCast(L, src % @bitSizeOf(T));
+            const dst_bit_idx = @intCast(L, dst % @bitSizeOf(T));
+
+            var tmp: T = src_word.*;
+
+            if (src_bit_idx < dst_bit_idx) {
+                tmp <<= (dst_bit_idx - src_bit_idx);
+            } else {
+                tmp >>= (src_bit_idx - dst_bit_idx);
+            }
+
+            // unset original bit
+            const src_bit_mask = One << src_bit_idx;
+            src_word.* &= ~src_bit_mask;
+
+            // shift bit
+            const dst_bit_mask = One << dst_bit_idx;
+            dst_word.* = (dst_word.* & ~dst_bit_mask) | (tmp & dst_bit_mask);
         }
 
         pub fn unsetAll(self: *Self) void {
@@ -243,6 +285,13 @@ fn FixedSizeSetImpl(comptime T: type, comptime size: usize, comptime store_cardi
         pub fn iter_unset(self: *const Self) FixedSizeSetIterator(T, false) {
             return FixedSizeSetIterator(T, false).new(self.container.data[0..], size);
         }
+
+        pub fn debugPrint(self: *const Self) void {
+            for (self.container.data) |x| {
+                std.debug.print("{b:0>32} ", .{@bitReverse(x)});
+            }
+            std.debug.print("\n", .{});
+        }
     };
 }
 
@@ -313,6 +362,10 @@ test "Size of FixedSizeSetImpl" {
     assert(@sizeOf(FixedSizeSetImpl(u64, 100, false)) == 16);
     assert(@sizeOf(FixedSizeSetImpl(u64, 130, false)) == 24);
     assert(@sizeOf(FixedSizeSetImpl(u64, 1, true)) > 8); // cardinality needs storage
+}
+
+test "NewAllSet" {
+    assert(37 == FixedSizeSetImpl(u32, 37, false).newAllSet().cardinality());
 }
 
 test "Bit assignment" {
@@ -431,4 +484,55 @@ test "subset" {
 
     _ = sub.setBit(0);
     assert(!sub.is_subset_of(&sup));
+}
+
+test "MoveBitsLeft" {
+    const bits = [_]u32{ 1, 2, 5, 7, 8 };
+    var sub = FixedSizeSet(32).new_with_bits_set(&bits);
+    var sup = sub;
+    _ = sup;
+
+    sub.moveBitAndUnset(7, 6); // 1 -> 0
+    assert(!sub.isSet(7));
+    assert(sub.isSet(6));
+
+    std.debug.print("\n>", .{});
+    sub.debugPrint();
+    sub.moveBitAndUnset(7, 6); // 0 -> 1
+    std.debug.print("<", .{});
+
+    sub.debugPrint();
+    assert(!sub.isSet(7));
+    assert(!sub.isSet(6));
+
+    sub.moveBitAndUnset(7, 6); // 0 -> 0
+    assert(!sub.isSet(7));
+    assert(!sub.isSet(6));
+
+    sub.moveBitAndUnset(5, 2); // 1 -> 1
+    assert(!sub.isSet(5));
+    assert(sub.isSet(2));
+}
+
+test "MoveBitsRight" {
+    const bits = [_]u32{ 1, 2, 5, 7 };
+    var sub = FixedSizeSet(32).new_with_bits_set(&bits);
+    var sup = sub;
+    _ = sup;
+
+    sub.moveBitAndUnset(2, 3); // 1 -> 0
+    assert(!sub.isSet(2));
+    assert(sub.isSet(3));
+
+    sub.moveBitAndUnset(2, 3); // 0 -> 1
+    assert(!sub.isSet(2));
+    assert(!sub.isSet(3));
+
+    sub.moveBitAndUnset(2, 3); // 0 -> 0
+    assert(!sub.isSet(2));
+    assert(!sub.isSet(3));
+
+    sub.moveBitAndUnset(1, 5); // 1 -> 1
+    assert(!sub.isSet(1));
+    assert(sub.isSet(5));
 }

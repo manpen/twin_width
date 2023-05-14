@@ -17,19 +17,36 @@ pub const Color = enum {
     }
 };
 
+pub const RowType = enum(usize) {
+    Neighbor = 0,
+    Red = 1,
+    Two = 2,
+};
+
+pub const DigestAlgo = std.crypto.hash.Sha1;
+pub const Digest = [DigestAlgo.digest_length]u8;
+
 pub fn MatrixGraph(comptime num_nodes: u32) type {
     return struct {
         const Self = @This();
-        pub const numNodes: u32 = num_nodes;
+        pub const NumNodes: u32 = num_nodes;
         pub const Node = u32;
         pub const BitSet = FixedSizeSet(num_nodes);
 
         num_edges: u32,
-        matrix: [2 * num_nodes]BitSet,
+        matrix: [3 * num_nodes]BitSet,
         has_neighbors: BitSet,
+        invalid_two_neighbors: BitSet,
+        batch_updates: bool,
 
         pub fn new() Self {
-            var graph = Self{ .num_edges = 0, .matrix = undefined, .has_neighbors = BitSet.new() };
+            var graph = Self{
+                .num_edges = 0,
+                .matrix = undefined,
+                .has_neighbors = BitSet.new(),
+                .invalid_two_neighbors = BitSet.newAllSet(),
+                .batch_updates = false,
+            };
 
             const empty = FixedSizeSet(num_nodes).new();
             for (&graph.matrix) |*r| r.* = empty;
@@ -58,6 +75,20 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             return self.deg(u) - self.redDeg(u);
         }
 
+        pub fn beginBatchUpdates(self: *Self) void {
+            self.batch_updates = true;
+        }
+
+        pub fn endBatchUpdates(self: *Self) void {
+            assert(self.batch_updates);
+            self.batch_updates = false;
+            var u: Node = 0;
+            while (u < num_nodes) : (u += 1) {
+                self.recomputeTwoNeighbors(u);
+            }
+            self.assertIsConsistent();
+        }
+
         pub fn addEdge(self: *Self, u: Node, v: Node, color: Color) ?Color {
             var prev: ?Color = null;
 
@@ -65,10 +96,17 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                 prev = Color.Black;
             } else {
                 _ = self.neighbors(v).setBit(u);
-
                 self.num_edges += 1;
-                _ = self.has_neighbors.setBit(u);
-                _ = self.has_neighbors.setBit(v);
+
+                inline for ([_]Node{ u, v }, [_]Node{ v, u }) |a, b| {
+                    _ = self.has_neighbors.setBit(a);
+
+                    if (!self.batch_updates) {
+                        _ = self.twoNeighbors(a).setBit(b);
+                        self.setColumn(RowType.Two, a, self.constNeighbors(b).iter_set());
+                        self.twoNeighbors(a).assignOr(self.constNeighbors(b));
+                    }
+                }
             }
 
             if (color.isRed()) {
@@ -111,6 +149,17 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                 _ = self.has_neighbors.unsetBit(v);
             }
 
+            if (!self.batch_updates and u != v) {
+                var nodes_to_update = self.constNeighbors(u).copyWithOr(self.constNeighbors(v));
+                _ = nodes_to_update.setBit(u);
+                _ = nodes_to_update.setBit(v);
+
+                var iter = nodes_to_update.iter_set();
+                while (iter.next()) |i| {
+                    self.recomputeTwoNeighbors(i);
+                }
+            }
+
             self.assertIsConsistent();
 
             return prev;
@@ -134,6 +183,23 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                 var neighs = self.redNeighbors(u).iter_set();
                 while (neighs.next()) |v| {
                     _ = self.redNeighbors(v).unsetBit(u);
+                }
+            }
+
+            // two neighbors
+            if (!self.batch_updates) {
+                var iter = self.twoNeighbors(u).iter_set();
+                while (iter.next()) |i| {
+                    _ = self.twoNeighbors(i).unsetBit(u);
+                }
+                self.twoNeighbors(u).unsetAll();
+            }
+
+            // neighbors
+            if (!self.batch_updates) {
+                var neighs = self.neighbors(u).iter_set();
+                while (neighs.next()) |v| {
+                    self.recomputeTwoNeighbors(v);
                 }
             }
 
@@ -183,20 +249,59 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             }
         }
 
+        pub fn mergeDistantNodes(self: *Self, rem: Node, sur: Node) void {
+            self.mergeNodes(rem, sur, null);
+        }
+
+        pub fn mergeDistantNodesOpt(self: *Self, rem: Node, sur: Node) void {
+            var newReds = self.neighbors(sur).*;
+            newReds.assignOr(self.constNeighbors(rem));
+            newReds.assignSub(self.constRedNeighbors(sur));
+
+            var iter = newReds.iter_set();
+            while (iter.next()) |v| {
+                _ = self.addEdge(sur, v, Color.Red);
+            }
+
+            _ = self.removeEdge(sur, sur);
+            _ = self.removeEdgesAtNode(rem);
+
+            self.assertIsConsistent();
+        }
+
         pub fn neighbors(self: *Self, u: Node) *BitSet {
-            return &self.matrix[2 * u];
+            return &self.matrix[3 * u + @enumToInt(RowType.Neighbor)];
         }
 
         pub fn constNeighbors(self: *const Self, u: Node) *const BitSet {
-            return &self.matrix[2 * u];
+            return &self.matrix[3 * u + @enumToInt(RowType.Neighbor)];
         }
 
         pub fn redNeighbors(self: *Self, u: Node) *BitSet {
-            return &self.matrix[2 * u + 1];
+            return &self.matrix[3 * u + @enumToInt(RowType.Red)];
         }
 
         pub fn constRedNeighbors(self: *const Self, u: Node) *const BitSet {
-            return &self.matrix[2 * u + 1];
+            return &self.matrix[3 * u + @enumToInt(RowType.Red)];
+        }
+
+        pub fn twoNeighbors(self: *Self, u: Node) *BitSet {
+            assert(!self.batch_updates);
+            return &self.matrix[3 * u + @enumToInt(RowType.Two)];
+        }
+
+        pub fn constTwoNeighbors(self: *const Self, u: Node) *const BitSet {
+            return &self.matrix[3 * u + @enumToInt(RowType.Two)];
+        }
+
+        fn recomputeTwoNeighbors(self: *Self, u: Node) void {
+            var two_neighbors: *BitSet = self.twoNeighbors(u);
+            two_neighbors.* = self.constNeighbors(u).*;
+
+            var iter = self.constNeighbors(u).iter_set();
+            while (iter.next()) |v| {
+                two_neighbors.assignOr(self.constNeighbors(v));
+            }
         }
 
         pub fn blackNeighborsCopied(self: *const Self, u: Node) BitSet {
@@ -221,8 +326,8 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             return max_deg;
         }
 
-        pub fn assertIsConsistent(self: *Self) void {
-            if (builtin.mode != std.builtin.Mode.Debug) {
+        pub fn assertIsConsistent(self: *const Self) void {
+            if (true or builtin.mode != std.builtin.Mode.Debug) {
                 return;
             }
 
@@ -241,7 +346,51 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                 num_edges += self.constNeighbors(u).cardinality();
 
                 assert(self.has_neighbors.isSet(u) == (self.deg(u) > 0));
+
+                if (!self.batch_updates) {
+                    var two = self.constNeighbors(u).*;
+                    var iter = self.constNeighbors(u).iter_set();
+                    while (iter.next()) |i| {
+                        two.assignOr(self.constNeighbors(i));
+                    }
+                    if (self.deg(u) > 0) {
+                        _ = two.setBit(u);
+                    }
+
+                    var is_equal = self.constTwoNeighbors(u).is_equal(&two);
+
+                    if (!is_equal) {
+                        print("u: {d}\nExp: ", .{u});
+                        two.debugPrint();
+                        print("Act: ", .{});
+                        self.constTwoNeighbors(u).debugPrint();
+
+                        assert(false);
+                    }
+                }
             }
+        }
+
+        fn setColumn(self: *Self, comptime rowType: RowType, column: u32, iter: anytype) void {
+            var myiter = iter;
+            while (myiter.next()) |i| {
+                _ = self.matrix[3 * i + @enumToInt(rowType)].setBit(column);
+            }
+        }
+
+        fn unsetColumn(self: *Self, comptime rowType: RowType, column: u32, iter: anytype) void {
+            var myiter = iter;
+            while (myiter.next()) |i| {
+                _ = self.matrix[3 * i + @enumToInt(rowType)].unsetBit(column);
+            }
+        }
+
+        pub fn hash(self: *const Self) Digest {
+            var digest = DigestAlgo.init(.{});
+            digest.update(std.mem.sliceAsBytes(self.matrix[0..]));
+            var output: Digest = undefined;
+            digest.final(&output);
+            return output;
         }
     };
 }
@@ -253,7 +402,7 @@ test "New Matrix Graph" {
 }
 
 test "Add Edge" {
-    var graph = MatrixGraph(100).new();
+    var graph = MatrixGraph(8).new();
     assert(graph.numberOfEdges() == 0);
     assert(graph.addEdge(0, 1, Color.Black) == null);
     assert(graph.addEdge(1, 0, Color.Black) == Color.Black);

@@ -10,7 +10,9 @@ const Node = @import("node.zig").Node;
 const bfs_mod = @import("bfs.zig");
 const compressed_bitset = @import("../util/compressed_bitmap.zig");
 const solver_resources = @import("solver.zig");
+
 const solver_bnb = @import("../exact/branch_and_bound.zig");
+const exact_bs = @import("../exact/bootstrapping.zig");
 
 const pace_2023 = @import("../pace_2023/pace_fmt.zig");
 
@@ -666,7 +668,15 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub fn solveExact(self: *Self) !T {
-            var upper_bound: u32 = 45; //@intCast(u32, try self.solveGreedy());
+            var org_graph = try std.ArrayList(exact_bs.MatrixGraphFromInducedSubGraph).initCapacity(self.allocator, self.connected_components.items.len);
+            defer org_graph.deinit();
+            defer for (org_graph.items) |*item| item.deinit();
+
+            for (self.connected_components.items) |cc| {
+                try org_graph.append(try exact_bs.matrixGraphUnionFromInducedSubGraph(T, &cc.subgraph, self.allocator));
+            }
+
+            var upper_bound: u32 = @intCast(u32, try self.solveGreedy());
             if (upper_bound == 0) {
                 return 0;
             }
@@ -678,17 +688,20 @@ pub fn Graph(comptime T: type) type {
             var tww: T = 0;
             while (cc_iter.next()) |cc| {
                 std.debug.assert(tww < upper_bound); // if we should reached upper_bound, there's nothing to do, so we should have stopped earlier
+
                 var component = &self.connected_components.items[cc.index];
+                var subgraph = &org_graph.items[cc.index];
 
                 // the exact solver treats the upper as exclusive; i.e. by setting it to the heuristic tww,
                 // we force the solver to produce a better solution or fail.
                 std.debug.print("Invoke exact solver with |CC|={d} lower={d} upper={d}\n", .{ component.subgraph.nodes.len, tww, upper_bound });
-                var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, tww, upper_bound) catch |e| {
-                    std.debug.print(" ... infeasable\n", .{});
+                var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, subgraph, tww, upper_bound) catch |e| {
                     if (e == solver_bnb.SolverError.Infeasable) {
+                        std.debug.print(" ... infeasable\n", .{});
                         tww = @intCast(T, upper_bound);
                         break;
                     }
+                    std.debug.print(" ... failed\n", .{});
                     return e;
                 };
                 std.debug.print(" ... solve with tww={d}\n", .{improved_result});

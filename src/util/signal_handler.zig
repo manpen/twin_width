@@ -19,8 +19,7 @@ fn handle_sigterm(_: c_int) callconv(.C) void {
     var writer = buffered.writer();
 
     const n = cc_slice.len;
-    var i: usize = 0;
-    while (i<n) {
+    for (0..n) |i| {
         const m = cc_slice[i].len;
         // isolated vertex/empty slice
         if (m < 2) {
@@ -31,18 +30,21 @@ fn handle_sigterm(_: c_int) callconv(.C) void {
             std.fmt.format(writer,"{d} {d}\n",.{cc_slice[i][j]+1,cc_slice[i][j+1]+1}) catch {};
             j+=2;
         }
-        i+=1;
     }
-    // each cc must be contracted with each other cc. this handles isolated single vertices
-    i = 0;
-    while (i < n-1) {
-        const j = cc_slice[i].len;
-        const k = cc_slice[i+1].len;
+    // each cc must be contracted with each other cc.
+    for(0..(n-1)) |i| {
+        var j = cc_slice[i].len;
+        var k = cc_slice[i+1].len;
         if (j == 0 or k == 0) {
             continue;
         }
-        std.fmt.format(writer,"{d} {d}\n",.{cc_slice[i][k-1]+1,cc_slice[i][j-1]+1}) catch {};
-        i+=1;
+        if (j == 1) {
+            j+=1;
+        }
+        if (k == 1) {
+            k+=1;
+        }
+        std.fmt.format(writer,"{d} {d}\n",.{cc_slice[i+1][k-2]+1,cc_slice[i][j-2]+1}) catch {};
     }
     buffered.flush() catch {};
     os.exit(0);

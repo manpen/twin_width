@@ -320,18 +320,15 @@ pub fn ConnectedComponent(comptime T: type) type {
             var slice: []u32 = try allocator.alloc(u32, num_entries);
             var backup_slice: []u32 = try allocator.alloc(u32, num_entries);
             if (nodes.len > 2) {
-                var i: usize = 0;
-                var j: usize = 0;
-                while (i < nodes.len - 1) {
-                    slice[j]=@as(u32, nodes[i]);
-                    slice[j+1]=@as(u32, nodes[i+1]);
+               var j: usize = 0;
+               for (0..(nodes.len-1)) |i| {
+                    slice[j]=@as(u32, nodes[i+1]);
+                    slice[j+1]=@as(u32, nodes[i]);
                     j+=2;
-                    i+=1;
                 }
             } else {
                 slice[0]=nodes[0];
             }
-
 
 			number_of_edges = number_of_edges>>1;
             var retraceable = try retraceable_contraction.RetraceableContractionSequence(T).init(graph.allocator, @intCast(T,nodes.len), number_of_edges);

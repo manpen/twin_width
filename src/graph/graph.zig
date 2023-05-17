@@ -668,6 +668,8 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub fn solveExact(self: *Self) !T {
+            const ForceBnBSolution = false;
+
             var org_graph = try std.ArrayList(exact_bs.MatrixGraphFromInducedSubGraph).initCapacity(self.allocator, self.connected_components.items.len);
             defer org_graph.deinit();
             defer for (org_graph.items) |*item| item.deinit();
@@ -695,9 +697,10 @@ pub fn Graph(comptime T: type) type {
                 // the exact solver treats the upper as exclusive; i.e. by setting it to the heuristic tww,
                 // we force the solver to produce a better solution or fail.
                 std.debug.print("Invoke exact solver with |CC|={d} lower={d} upper={d}\n", .{ component.subgraph.nodes.len, tww, upper_bound });
-                var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, subgraph, tww, upper_bound) catch |e| {
+                var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, subgraph, tww, upper_bound + @boolToInt(ForceBnBSolution)) catch |e| {
                     if (e == solver_bnb.SolverError.Infeasable) {
                         std.debug.print(" ... infeasable\n", .{});
+                        std.debug.assert(!ForceBnBSolution);
                         tww = @intCast(T, upper_bound);
                         break;
                     }

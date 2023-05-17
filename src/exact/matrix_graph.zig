@@ -4,6 +4,8 @@ const FixedSizeSet = @import("fixed_size_bitset.zig").FixedSizeSet;
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 
+const ExpensiveConsistencyChecks = false;
+
 pub const Color = enum {
     Black,
     Red,
@@ -229,6 +231,20 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             return result;
         }
 
+        pub fn redDegreeInNeighborhoodAfterMerge(self: *const Self, rem: Node, sur: Node) Node {
+            var reds = self.redNeighborsAfterMerge(rem, sur);
+            var red_degree = reds.cardinality();
+            reds.assignSub(self.constRedNeighbors(rem));
+            reds.assignSub(self.constRedNeighbors(sur));
+
+            // remaining reds were previously black, so this merge increases their degree
+            if (reds.cardinality() > 0) {
+                red_degree = @max(red_degree, self.maxRedDegreeIn(&reds) + 1);
+            }
+
+            return red_degree;
+        }
+
         pub fn mergeNodes(self: *Self, rem: Node, sur: Node, red_neighbors: ?*const BitSet) void {
             if (red_neighbors) |reds| {
                 // TODO: Implement this by bit magic
@@ -291,6 +307,7 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
         }
 
         pub fn constTwoNeighbors(self: *const Self, u: Node) *const BitSet {
+            assert(!self.batch_updates);
             return &self.matrix[3 * u + @enumToInt(RowType.Two)];
         }
 
@@ -327,7 +344,7 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
         }
 
         pub fn assertIsConsistent(self: *const Self) void {
-            if (true or builtin.mode != std.builtin.Mode.Debug) {
+            if (builtin.mode != std.builtin.Mode.Debug) {
                 return;
             }
 
@@ -338,9 +355,12 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                 var v: Node = u;
 
                 assert(self.constRedNeighbors(u).is_subset_of(self.constNeighbors(u)));
-                while (v < self.numberOfNodes()) : (v += 1) {
-                    assert(self.constNeighbors(u).isSet(v) == self.constNeighbors(v).isSet(u));
-                    assert(self.constRedNeighbors(u).isSet(v) == self.constRedNeighbors(v).isSet(u));
+
+                if (ExpensiveConsistencyChecks) {
+                    while (v < self.numberOfNodes()) : (v += 1) {
+                        assert(self.constNeighbors(u).isSet(v) == self.constNeighbors(v).isSet(u));
+                        assert(self.constRedNeighbors(u).isSet(v) == self.constRedNeighbors(v).isSet(u));
+                    }
                 }
 
                 num_edges += self.constNeighbors(u).cardinality();

@@ -502,6 +502,10 @@ fn Frame(comptime Graph: type) type {
                 return;
             }
 
+            if (self.work_graph.has_neighbors.areAllUnset()) {
+                return;
+            }
+
             var iter = self.work_graph.has_neighbors.iter_set();
             var sur = iter.next().?;
 

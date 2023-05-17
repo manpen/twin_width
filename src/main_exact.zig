@@ -63,7 +63,8 @@ fn load_best_known(filename: []const u8) !?u32 {
 pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, filename: []const u8, short_name: []const u8) !T {
     var timer = try std.time.Instant.now();
     var pace_part = try pace.Pace2023Fmt(T).fromFile(allocator, filename);
-    
+    defer pace_part.deinit(allocator);
+
     var loaded_graph = graph.Graph(T).loadFromPace(allocator, &pace_part) catch |err| {
         //Print error message if the graph could not be loaded std.debug.print("Could not load graph: {}", .{err});
         return err;
@@ -132,8 +133,6 @@ pub fn main() !void {
     var dirIter = try std.fs.cwd().openIterableDir(target_directory, .{});
     defer dirIter.close();
     var dirit = dirIter.iterate();
-
-
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);

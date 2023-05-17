@@ -862,6 +862,7 @@ pub fn Graph(comptime T: type) type {
             self.scratch_bitset.unsetAll();
 
             var bfs_stack = try bfs_mod.BfsQueue(T).init(self.allocator, self.number_of_nodes);
+            defer bfs_stack.deinit(self.allocator);
 
             var unsetIter = self.scratch_bitset.iterUnset();
             var components: u32 = 0;
@@ -905,11 +906,12 @@ pub fn Graph(comptime T: type) type {
                 connected_component.deinit(self.allocator);
             }
             self.connected_components.deinit(self.allocator);
+            self.connected_components_min_heap.deinit();
             self.contraction.deinit(self.allocator);
             self.allocator.free(self.connected_components_node_list_slice);
             self.scratch_bitset.deinit(self.allocator);
             self.erased_nodes.deinit(self.allocator);
-						self.last_merge_red_edges_erased.deinit(self.allocator);
+            self.last_merge_red_edges_erased.deinit(self.allocator);
             self.allocator.free(self.node_list);
         }
     };

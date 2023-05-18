@@ -668,6 +668,62 @@ pub fn InducedSubGraph(comptime T: type) type {
 						}
 
 						return seq.getTwinWidth();
+
+				}
+
+
+				pub fn solveMinHash(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
+            solver.scratch_bitset.unsetAll();
+            var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
+						var diff_nodes = std.AutoHashMap(u32,u32).init(self.graph.allocator);
+
+            if (contractions_left == 0) return 0;
+            var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
+            while (contractions_left > 0) {
+								try self.graph.min_hash.fetchNextMoves(120,self.graph);
+
+								var potential = Graph(T).InducedTwinWidthPotential.default();
+
+								var min_mv:u32 = std.math.maxInt(u32);
+								var max_mv:u32 = 0;
+								diff_nodes.clearRetainingCapacity();
+								var def = Graph(T).InducedTwinWidthPotential.default();
+								for(0..self.graph.min_hash.fetched_moves.items.len) |mv_index| {
+									const mv = self.graph.min_hash.fetched_moves.items[mv_index];
+
+									const move = mv.intoMove(T,self.graph.number_of_nodes);
+									var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&def, seq.getTwinWidth());
+									if(diff_nodes.getPtr(move.erased)) |er| {
+										er.* += 1;
+										max_mv = std.math.max(max_mv,er.*);
+									}
+									else {
+										try diff_nodes.put(move.erased,1);
+									}
+									if(diff_nodes.getPtr(move.survivor)) |sr| {
+										sr.* += 1;
+										max_mv = std.math.max(max_mv,sr.*);
+									}
+									else {
+										try diff_nodes.put(move.survivor,1);
+									}
+									min_mv = std.math.min(min_mv,global_score.tww);
+									if(global_score.tww < potential.tww) {
+										min_contraction = move;
+										potential = global_score;
+									}
+								}
+
+								std.debug.print("Min tww {} and selected {} total number of different nodes {} max_mv {}\n",.{min_mv,potential.tww, diff_nodes.count(), max_mv});
+								const length = self.graph.min_hash.fetched_moves.items.len;
+								try self.graph.min_hash.reinsertFetchedMoves();
+								_ = self.graph.addContraction(min_contraction.erased,min_contraction.survivor,seq) catch |err| {
+									std.debug.print("Contractions left {} length {} tww {}\n",.{contractions_left, length, seq.getTwinWidth()});
+									return err;
+								};
+								contractions_left-=1;
+						}
+						return seq.getTwinWidth();
 				}
 
 				pub fn solveSweepingSolverTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), budget_secs: u64, probing: bool) !T {
@@ -868,6 +924,20 @@ pub fn InducedSubGraph(comptime T: type) type {
                     min_contraction = contraction.Contraction(T){ .survivor = first_node, .erased = selection.target };
                 }
 
+								try self.graph.min_hash.fetchNextMoves(40,self.graph);
+								for(0..self.graph.min_hash.fetched_moves.items.len) |mv_index| {
+									const mv = self.graph.min_hash.fetched_moves.items[mv_index];
+
+									const move = mv.intoMove(T,self.graph.number_of_nodes);
+									var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&selection.potential, seq.getTwinWidth());
+									std.debug.print("Move {any} tww {}\n",.{mv,global_score.tww});
+									if(global_score.isLess(selection.potential,seq.getTwinWidth())) {
+										min_contraction = move;
+										selection.potential = global_score;
+									}
+								}
+								try self.graph.min_hash.reinsertFetchedMoves();
+
                 // Reset all variables which were set to select the best postponed move
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
@@ -877,42 +947,6 @@ pub fn InducedSubGraph(comptime T: type) type {
                 total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge, seq, min_contraction, &contractions_left), total_tww);
 
                 solver.priority_queue.addTick(@intCast(T, contractions_left_copy - contractions_left));
-
-                if (enable_follow_up_merge and contractions_left > total_tww) {
-                    var follow_up_moves: u32 = 0;
-                    var next_selection: ?TargetMinimalInducedTww = null;
-
-                    while (!self.graph.erased_nodes.get(first_node)) {
-                        if (next_selection == null) {
-                            var iterator = solver.scorer.cachedIterator();
-                            next_selection = self.selectBestMoveOfIter(@TypeOf(iterator), &iterator, first_node, total_tww);
-                        }
-                        if (next_selection.?.potential.isLessOrEqual(selection.potential, total_tww)) {
-                            const contractions_left_copy_inner = contractions_left;
-
-                            min_contraction = contraction.Contraction(T){ .survivor = first_node, .erased = next_selection.?.target };
-
-                            total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge, seq, min_contraction, &contractions_left), total_tww);
-                            follow_up_moves += 1;
-                            next_selection = null;
-
-                            solver.priority_queue.addTick(@intCast(T, contractions_left_copy_inner - contractions_left));
-
-                            if (total_tww >= contractions_left) break;
-                            if (!enable_follow_up_merge) break;
-                        } else {
-                            // If the node seems egligable for merges update distance metrics and try again to merge
-                            if (follow_up_moves > 5) {
-                                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-                                next_selection = try self.selectBestMove(K, P, first_node, solver, total_tww);
-                                follow_up_moves = 0;
-                            } else {
-                                // otherwise break
-                                break;
-                            }
-                        }
-                    }
-                }
 
                 // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
                 max_consecutive_postpones = contractions_left + 1;

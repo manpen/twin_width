@@ -10,6 +10,7 @@ const Node = @import("node.zig").Node;
 const bfs_mod = @import("bfs.zig");
 const compressed_bitset = @import("../util/compressed_bitmap.zig");
 const solver_resources = @import("solver.zig");
+const min_hash_mod = @import("../util/min_hash.zig");
 
 const pace_2023 = @import("../pace_2023/pace_fmt.zig");
 
@@ -63,6 +64,8 @@ pub fn Graph(comptime T: type) type {
 
 				last_merge_first_level_merge: bool,
 				last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
+				
+				min_hash: min_hash_mod.MinHashSimiliarity(T),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
@@ -593,9 +596,11 @@ pub fn Graph(comptime T: type) type {
                     if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
 												self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
+												//self.min_hash.addTransferedEdge(item,false,false);
                     } else {
                         // Inform about the removal of the red edge
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).redToDeleted(item));
+												//self.min_hash.addRemovedEdge(item,false);
                     }
                 }
 								else {
@@ -622,6 +627,7 @@ pub fn Graph(comptime T: type) type {
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
 
 												self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
+												//self.min_hash.addTransferedEdge(item,true,false);
                     }
                 }
                 // Came from survivor
@@ -637,24 +643,31 @@ pub fn Graph(comptime T: type) type {
                     try self.node_list[item].addRedEdge(self.allocator, survivor);
 
                     try self.node_list[item].removeBlackEdge(self.allocator, survivor);
+										//self.min_hash.addChangeColorSurvivorEdge(item);
                     try remove_list.append(item);
                 }
                 tww = std.math.max(tww, @intCast(T, self.node_list[item].red_edges.cardinality()));
             }
 
             for (remove_list.items) |item| {
-                //try self.min_hash.removeNode(self.allocator,item, &self.node_list[item].black_edges);
                 // Batch remove?
                 try self.node_list[survivor].removeBlackEdge(self.allocator, item);
-                //try self.min_hash.hashNodeNeighborhood(self.allocator,item, &self.node_list[item].black_edges);
             }
 
             var black_remove_iter = self.node_list[erased].black_edges.iterator();
             while (black_remove_iter.next()) |item| {
                 try self.node_list[item].removeBlackEdge(self.allocator, erased);
+								//self.min_hash.addRemovedEdge(item,true);
             }
 
-            //try self.min_hash.hashNodeNeighborhood(self.allocator,survivor, &self.node_list[survivor].black_edges);
+						//try self.min_hash.batchUpdateRehashNodes(erased,survivor,self);
+						var iter_survivor = self.node_list[survivor].unorderedIterator();
+						while(iter_survivor.next()) |item| {
+							try self.min_hash.rehashNode(item,self);
+						}
+						try self.min_hash.rehashNode(survivor, self);
+						try self.min_hash.removeNode(erased);
+
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
             try seq.addContraction(self.allocator, erased, survivor, std.math.max(tww, seq.getTwinWidth()));
@@ -720,6 +733,7 @@ pub fn Graph(comptime T: type) type {
                 node.num_leafes = 0;
             }
 
+						var hash = try min_hash_mod.MinHashSimiliarity(T).init(promote_thresh,degrade_tresh,allocator,number_of_nodes,50,4,node_list);
             //TODO: Add some errdefer's here
 
             var graph = Self{
@@ -735,6 +749,7 @@ pub fn Graph(comptime T: type) type {
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
                 .connected_components_node_list_slice = try allocator.alloc(T, number_of_nodes),
 								.started_at = try std.time.Instant.now(),
+								.min_hash = hash,
 								.last_merge_first_level_merge = false,
 								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
             };
@@ -773,7 +788,7 @@ pub fn Graph(comptime T: type) type {
                 allocator.free(node_list);
             }
 
-            return Self{
+            var graph_instance = Self{
                 .number_of_nodes = pace.number_of_nodes,
                 .number_of_edges = pace.number_of_edges, //ATM
                 .node_list = node_list,
@@ -786,9 +801,18 @@ pub fn Graph(comptime T: type) type {
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
 								.started_at = try std.time.Instant.now(),
+								.min_hash = undefined,
 								.last_merge_first_level_merge = false,
 								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
             };
+
+						var start_t = try std.time.Instant.now();
+						var hash = try min_hash_mod.MinHashSimiliarity(T).init(40,4,&graph_instance);
+						var end_t = try std.time.Instant.now();
+						std.debug.print("Calculated min hash in {}ms move size {}\n",.{end_t.since(start_t)/(1000*1000), hash.pq_moves.len});
+						graph_instance.min_hash = hash;
+
+						return graph_instance;
         }
 
         pub fn findAllConnectedComponents(self: *Self) !void {

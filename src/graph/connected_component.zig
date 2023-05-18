@@ -75,9 +75,10 @@ pub fn ConnectedComponent(comptime T: type) type {
         }
 
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T,K,P)) !T {
-					var result = try self.subgraph.solveGreedyTopK(K,P,&self.current_contraction_seq,solver,true);
+					var result = try self.subgraph.solveMinHash(K,P,&self.current_contraction_seq,solver);
 					try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
 					self.tww = result;
+					if(self.tww > 0) return self.tww;
 
 					if(self.tww < 200 or self.subgraph.nodes.len < 3700) {
 						if(self.subgraph.nodes.len > 2_000_000 and self.tww >= 90) {}

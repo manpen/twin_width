@@ -59,7 +59,7 @@ pub const MinHash = struct {
     pub inline fn generatePermutation(allocator: std.mem.Allocator, length: u32, seed: u64) ![]u32 {
         var memory = try allocator.alloc(u32, length);
         for (0..memory.len) |i| {
-            memory[i] = i;
+            memory[i] = @intCast(u32,i);
         }
 
         var gen = std.rand.DefaultPrng.init(seed);
@@ -221,203 +221,22 @@ pub const MinHashEntry = struct {
     }
 };
 
-pub fn MinHashSimiliarity(comptime T: type) type {
-    return struct {
-        const Self = @This();
-        const TransferedEdge = struct { T, bool, bool };
-        const RemovedEdge = struct { T, bool };
+pub fn MinHashSimilarity(comptime T: type, comptime B:u32) type {
+    _ = B;
+    _ = T;
+	return struct {
 
-        bands: []MinHashBand(4),
-        score_table: std.AutoArrayHashMapUnmanaged(u64, u32),
-        pq_moves: std.PriorityQueue(MinHashEntry, void, MinHashEntry.compare),
-        score_counter: []u32,
-        cutoff: u32,
-        allocator: std.mem.Allocator,
-
-        changed_color_survivor: std.ArrayListUnmanaged(T),
-
-        // From erased to survivor
-        transfered_edges: std.ArrayListUnmanaged(TransferedEdge),
-
-        // When erased and survivor have both the edge
-        removed_edges: std.ArrayListUnmanaged(RemovedEdge),
-
-        fetched_moves: std.ArrayListUnmanaged(MinHashEntry),
-
-        pub inline fn init(num_bands: u32, band_width: u32, graph: *graph_mod.Graph(T)) !Self {
-            var bands = try graph.allocator.alloc(MinHashBand(4), num_bands);
-            var score_table = std.AutoArrayHashMapUnmanaged(u64, u32){};
-            var moves = std.PriorityQueue(MinHashEntry, void, MinHashEntry.compare).init(graph.allocator, {});
-
-            var score_counter = try graph.allocator.alloc(u32, num_bands + 1);
-            @memset(score_counter, 0);
-
-            var transfered_edges = try std.ArrayListUnmanaged(TransferedEdge).initCapacity(graph.allocator, graph.number_of_nodes);
-            var removed_edges = try std.ArrayListUnmanaged(RemovedEdge).initCapacity(graph.allocator, graph.number_of_nodes);
-            var changed_color_survivor = try std.ArrayListUnmanaged(T).initCapacity(graph.allocator, graph.number_of_nodes);
-
-            var seed: u64 = 19;
-
-            var mhs = Self{ .bands = bands, .score_table = score_table, .pq_moves = moves, .cutoff = num_bands >> 2, .allocator = graph.allocator, .transfered_edges = transfered_edges, .removed_edges = removed_edges, .score_counter = score_counter, .fetched_moves = try std.ArrayListUnmanaged(MinHashEntry).initCapacity(graph.allocator, graph.number_of_nodes), .changed_color_survivor = changed_color_survivor };
-
-            for (mhs.bands) |*band| {
-                band.* = try MinHashBand(T).init(band_width, graph, seed);
-                seed += 12395321;
-                var iter = band.sim_nodes.iterator();
-                while (iter.next()) |item| {
-                    if (mhs.score_table.getPtr(item.key_ptr.*)) |score| {
-                        score_counter[score.*] -= 1;
-                        score.* += 1;
-                        score_counter[score.*] += 1;
-                    } else {
-                        try mhs.score_table.put(graph.allocator, item.key_ptr.*, 1);
-                        score_counter[1] += 1;
-                    }
-                }
-            }
-
-            try mhs.adjustCutoffValue(graph);
-            return mhs;
-        }
-
-        pub fn adjustCutoffValue(self: *Self, graph: *graph_mod.Graph(T)) !void {
-            var total_counter: u32 = 0;
-            var cutoff: u32 = 0;
-            for (0..self.score_counter.len) |i| {
-                total_counter += self.score_counter[self.score_counter.len - (i + 1)];
-                cutoff = @intCast(u32, self.score_counter.len - (i + 1));
-                if (total_counter >= 10000) break;
-            }
-
-            // Clear pq
-            self.cutoff = cutoff;
-            self.pq_moves.len = 0;
-
-            var iter = self.score_table.iterator();
-            while (iter.next()) |item| {
-                if (item.value_ptr.* >= self.cutoff) {
-                    const move = MinHashEntry.keyIntoMove(T, item.key_ptr.*, graph.number_of_nodes);
-                    try self.pq_moves.add(MinHashEntry.from(item.key_ptr.*, item.value_ptr.*, @intCast(u32, self.bands.len), std.math.max(graph.node_list[move.erased].cardinality(), graph.node_list[move.survivor].cardinality())));
-                }
-            }
-        }
-
-        pub inline fn decreaseScore(self: *Self, key: u64) !void {
-            if (self.score_table.getPtr(key)) |k| {
-                self.score_counter[k.*] -= 1;
-                k.* -= 1;
-                self.score_counter[k.*] += 1;
-                if (k.* == 0) {
-                    _ = self.score_table.swapRemove(key);
-                }
-            }
-        }
-
-        pub inline fn increaseScore(self: *Self, key: u64, graph: *graph_mod.Graph(T)) !void {
-            if (self.score_table.getPtr(key)) |k| {
-                self.score_counter[k.*] -= 1;
-                k.* += 1;
-                self.score_counter[k.*] += 1;
-                if (k.* >= self.cutoff) {
-                    const move = MinHashEntry.keyIntoMove(T, key, graph.number_of_nodes);
-                    try self.pq_moves.add(MinHashEntry.from(key, k.*, @intCast(u32, self.bands.len), std.math.max(graph.node_list[move.erased].cardinality(), graph.node_list[move.survivor].cardinality())));
-                }
-            }
-        }
-
-        pub inline fn addTransferedEdge(self: *Self, node: T, from_color: bool, to_color: bool) void {
-            self.transfered_edges.append(self.allocator, .{ node, from_color, to_color }) catch unreachable;
-        }
-
-        pub inline fn addChangeColorSurvivorEdge(self: *Self, node: T) void {
-            self.changed_color_survivor.append(self.allocator, node) catch unreachable;
-        }
-
-        pub inline fn addRemovedEdge(self: *Self, node: T, color: bool) void {
-            self.removed_edges.append(self.allocator, .{ node, color }) catch unreachable;
-        }
-
-        pub inline fn batchUpdateRehashNodes(self: *Self, erased: T, survivor: T, graph: *graph_mod.Graph(T)) !void {
-            for (self.bands) |*band| {
-                for (self.removed_edges.items) |node_index| {
-                    try band.rehashNodeRemovedEdge(node_index.@"0", node_index.@"1", graph, self, erased);
-                }
-                for (self.transfered_edges.items) |node_index| {
-                    try band.rehashNodeTransferedEdge(node_index.@"0", node_index.@"1", node_index.@"2", graph, self, erased, survivor);
-                }
-                for (self.changed_color_survivor.items) |node_index| {
-                    try band.rehashNodeChangedColor(node_index, graph, self, survivor);
-                }
-                try band.removeNode(erased, self);
-            }
-            self.removed_edges.clearRetainingCapacity();
-            self.transfered_edges.clearRetainingCapacity();
-            self.changed_color_survivor.clearRetainingCapacity();
-        }
-
-        pub inline fn rehashNode(self: *Self, node_id: T, graph: *graph_mod.Graph(T)) !void {
-            for (self.bands) |*band| {
-                try band.rehashNode(node_id, graph, self);
-            }
-        }
-
-        pub inline fn removeNode(self: *Self, node_id: T) !void {
-            for (self.bands) |*band| {
-                try band.removeNode(node_id, self);
-            }
-        }
-
-        pub inline fn reinsertMove(self: *Self, move: MinHashEntry) !void {
-            try self.pq_moves.add(move);
-        }
-
-        pub inline fn reinsertFetchedMoves(self: *Self) !void {
-            try self.pq_moves.addSlice(self.fetched_moves.items);
-            self.fetched_moves.clearRetainingCapacity();
-        }
-
-        pub inline fn getNextMove(self: *Self, graph: *graph_mod.Graph(T)) !?MinHashEntry {
-            while (true) {
-                while (self.pq_moves.removeOrNull()) |move| {
-                    var mv = move.intoMove(T, graph.number_of_nodes);
-
-                    if (graph.erased_nodes.get(mv.erased) or graph.erased_nodes.get(mv.survivor)) continue;
-
-                    if (self.score_table.get(move.key)) |score| {
-                        if (score < self.cutoff) continue;
-
-                        const calculated_score = MinHashEntry.calculateScore(score, @intCast(u32, self.bands.len), std.math.max(graph.node_list[mv.erased].cardinality(), graph.node_list[mv.survivor].cardinality()));
-
-                        if (calculated_score > move.score) {
-                            try self.pq_moves.add(MinHashEntry.from(move.key, score, @intCast(u32, self.bands.len), std.math.max(graph.node_list[mv.erased].cardinality(), graph.node_list[mv.survivor].cardinality())));
-                            continue;
-                        }
-                        return move;
-                    }
-                }
-
-                // Adjust cutoff value
-                try self.adjustCutoffValue(graph);
-                if (self.pq_moves.len == 0) return null;
-            }
-        }
-
-        pub inline fn fetchNextMoves(self: *Self, k: u32, graph: *graph_mod.Graph(T)) !void {
-            std.debug.assert(self.fetched_moves.items.len == 0);
-            while (try self.getNextMove(graph)) |item| {
-                try self.fetched_moves.append(self.allocator, item);
-                if (self.fetched_moves.items.len >= k) return;
-            }
-        }
-    };
+	};
 }
+
 
 test "MinHash: Check is permutation" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
-    var perm = MinHash(u16).generatePermutation(gpa.allocator(), 200, 19);
-    var min_hash = try MinHash(u16).init(perm, 0);
-    var min_hash2 = try MinHash(u16).init(perm, 1);
+    var perm = try MinHash.generatePermutation(gpa.allocator(), 200, 19);
+		defer gpa.allocator().free(perm);
+    var min_hash = MinHash.init(perm, 0);
+    var min_hash2 = MinHash.init(perm, 1);
 
     var hash_map = std.AutoHashMap(u32, void).init(gpa.allocator());
     defer hash_map.deinit();
@@ -429,42 +248,44 @@ test "MinHash: Check is permutation" {
 
     try std.testing.expectEqual(min_hash.permutation.len, 200);
 
-    try std.testing.expectEqual(min_hash.getHash(100), min_hash2.getHash(101));
-    try std.testing.expectEqual(min_hash.getValueOfNode(99, false), min_hash.permutation[199]);
+    try std.testing.expectEqual(min_hash.getHash(101), min_hash2.getHash(100));
 }
 
 test "MinHash: Check hashing of complex types" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    var min_hash = try MinHash(u16).init(gpa.allocator(), 100, 19);
-    defer min_hash.deinit(gpa.allocator());
+    var perm = try MinHash.generatePermutation(gpa.allocator(), 200, 19);
+		defer gpa.allocator().free(perm);
+    var min_hash = MinHash.init(perm,0);
 
     var hash_map = std.AutoHashMap(u32, void).init(gpa.allocator());
     defer hash_map.deinit();
 
-    var initial = try std.BoundedArray(u16, 10).init(0);
+    var initial = try std.BoundedArray(u32, 10).init(0);
     try initial.append(10);
     try initial.append(20);
 
     const TestIterator = struct {
         const Self = @This();
-        base: *std.BoundedArray(u16, 10),
+        base: *std.BoundedArray(u32, 10),
         index: u32,
-        pub fn next(self: *Self) ?u16 {
+				offset: u32,
+        pub fn next(self: *Self) ?u32 {
             if (self.base.len <= self.index) return null;
             const item = self.base.buffer[self.index];
             self.index += 1;
-            return item;
+            return item+self.offset;
         }
     };
 
-    var iter_black = TestIterator{ .base = &initial, .index = 0 };
-    var iter_red = TestIterator{ .base = &initial, .index = 0 };
+    var iter_black = TestIterator{ .base = &initial, .index = 0, .offset = 0 };
+    var iter_red = TestIterator{ .base = &initial, .index = 0, .offset = 100 };
 
-    var hash = min_hash.hash(@TypeOf(&iter_black), &iter_black, &iter_red);
+    var hash = min_hash.hash(@TypeOf(&iter_black), &iter_black);
+    hash = std.math.min(min_hash.hash(@TypeOf(&iter_red), &iter_red),hash);
 
-    var min: u32 = std.math.maxInt(u16);
+    var min: u32 = std.math.maxInt(u32);
     for (initial.buffer[0..initial.len]) |item| {
         min = std.math.min(min, min_hash.permutation[item]);
     }

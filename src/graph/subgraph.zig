@@ -680,7 +680,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             if (contractions_left == 0) return 0;
             var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
             while (contractions_left > 0) {
-								try self.graph.min_hash.fetchNextMoves(120,self.graph);
+								//try self.graph.min_hash.fetchNextMoves(120,self.graph);
 
 								var potential = Graph(T).InducedTwinWidthPotential.default();
 
@@ -924,19 +924,19 @@ pub fn InducedSubGraph(comptime T: type) type {
                     min_contraction = contraction.Contraction(T){ .survivor = first_node, .erased = selection.target };
                 }
 
-								try self.graph.min_hash.fetchNextMoves(40,self.graph);
-								for(0..self.graph.min_hash.fetched_moves.items.len) |mv_index| {
-									const mv = self.graph.min_hash.fetched_moves.items[mv_index];
+								//try self.graph.min_hash.fetchNextMoves(40,self.graph);
+								//for(0..self.graph.min_hash.fetched_moves.items.len) |mv_index| {
+								//	const mv = self.graph.min_hash.fetched_moves.items[mv_index];
 
-									const move = mv.intoMove(T,self.graph.number_of_nodes);
-									var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&selection.potential, seq.getTwinWidth());
-									std.debug.print("Move {any} tww {}\n",.{mv,global_score.tww});
-									if(global_score.isLess(selection.potential,seq.getTwinWidth())) {
-										min_contraction = move;
-										selection.potential = global_score;
-									}
-								}
-								try self.graph.min_hash.reinsertFetchedMoves();
+								//	const move = mv.intoMove(T,self.graph.number_of_nodes);
+								//	var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&selection.potential, seq.getTwinWidth());
+								//	std.debug.print("Move {any} tww {}\n",.{mv,global_score.tww});
+								//	if(global_score.isLess(selection.potential,seq.getTwinWidth())) {
+								//		min_contraction = move;
+								//		selection.potential = global_score;
+								//	}
+								//}
+								//try self.graph.min_hash.reinsertFetchedMoves();
 
                 // Reset all variables which were set to select the best postponed move
                 current_postpones = 0;

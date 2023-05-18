@@ -65,7 +65,7 @@ pub fn Graph(comptime T: type) type {
 				last_merge_first_level_merge: bool,
 				last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 				
-				min_hash: min_hash_mod.MinHashSimiliarity(T),
+				//min_hash: min_hash_mod.MinHashSimiliarity(T),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
@@ -661,12 +661,12 @@ pub fn Graph(comptime T: type) type {
             }
 
 						//try self.min_hash.batchUpdateRehashNodes(erased,survivor,self);
-						var iter_survivor = self.node_list[survivor].unorderedIterator();
-						while(iter_survivor.next()) |item| {
-							try self.min_hash.rehashNode(item,self);
-						}
-						try self.min_hash.rehashNode(survivor, self);
-						try self.min_hash.removeNode(erased);
+						//var iter_survivor = self.node_list[survivor].unorderedIterator();
+						//while(iter_survivor.next()) |item| {
+						//	try self.min_hash.rehashNode(item,self);
+						//}
+						//try self.min_hash.rehashNode(survivor, self);
+						//try self.min_hash.removeNode(erased);
 
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
@@ -733,7 +733,7 @@ pub fn Graph(comptime T: type) type {
                 node.num_leafes = 0;
             }
 
-						var hash = try min_hash_mod.MinHashSimiliarity(T).init(promote_thresh,degrade_tresh,allocator,number_of_nodes,50,4,node_list);
+						//var hash = try min_hash_mod.MinHashSimiliarity(T).init(promote_thresh,degrade_tresh,allocator,number_of_nodes,50,4,node_list);
             //TODO: Add some errdefer's here
 
             var graph = Self{
@@ -749,7 +749,7 @@ pub fn Graph(comptime T: type) type {
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
                 .connected_components_node_list_slice = try allocator.alloc(T, number_of_nodes),
 								.started_at = try std.time.Instant.now(),
-								.min_hash = hash,
+								//.min_hash = hash,
 								.last_merge_first_level_merge = false,
 								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
             };
@@ -801,16 +801,17 @@ pub fn Graph(comptime T: type) type {
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
 								.started_at = try std.time.Instant.now(),
-								.min_hash = undefined,
+								//.min_hash = undefined,
 								.last_merge_first_level_merge = false,
 								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
             };
 
 						var start_t = try std.time.Instant.now();
-						var hash = try min_hash_mod.MinHashSimiliarity(T).init(40,4,&graph_instance);
-						var end_t = try std.time.Instant.now();
-						std.debug.print("Calculated min hash in {}ms move size {}\n",.{end_t.since(start_t)/(1000*1000), hash.pq_moves.len});
-						graph_instance.min_hash = hash;
+						_ = start_t;
+						//var hash = try min_hash_mod.MinHashSimiliarity(T).init(40,4,&graph_instance);
+						//var end_t = try std.time.Instant.now();
+						//std.debug.print("Calculated min hash in {}ms move size {}\n",.{end_t.since(start_t)/(1000*1000), hash.pq_moves.len});
+						//graph_instance.min_hash = hash;
 
 						return graph_instance;
         }

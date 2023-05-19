@@ -31,17 +31,19 @@ const CandidateListRef = struct {
 };
 
 const FeatureReuseCandidates: bool = true;
-const FeatureUseInfeasibleCache: bool = false;
+const FeatureUseInfeasibleCache: bool = true;
 const FeatureShrinkGraph: bool = true;
 const FeatureSkipProcessed: bool = true;
 const FeatureSkipInfeasibleCandidatesEarly: bool = true;
+const FeatureSkipPathNodes: bool = true;
+const FeatureComplements: bool = false; // BROKEN
 
 const FeatureReportProgress: u32 = 1 * 100000; // set to 0 to disable
 
 const FeatureInitialPruning: bool = true;
 const FeatureLeafNodePruning: bool = true;
 const FeatureTwinPruning: bool = true;
-const FeatureTinyGraphBelowSlack: bool = true; // almost no effect
+const FeatureTinyGraphBelowSlack: bool = true; // almost no effect, as it only helps, if we're about to find a solution
 
 pub const ExactBranchAndBound = struct {
     const Self = @This();
@@ -172,6 +174,12 @@ pub const ExactBranchAndBound = struct {
             var last = &self.candidate_lists.items[self.candidate_lists.items.len - 1];
             try candidates.ensureTotalCapacity(last.candidates.len);
             for (last.candidates) |c| {
+                if (!graph.has_neighbors.isSet(c.rem) or !graph.has_neighbors.isSet(c.sur)) {
+                    continue;
+                }
+
+                std.debug.assert(oldNodeIdOfNew[newNodeIdOfOld[c.rem]] == c.rem);
+                std.debug.assert(oldNodeIdOfNew[newNodeIdOfOld[c.sur]] == c.sur);
                 candidates.appendAssumeCapacity(ContraScore{ .rem = newNodeIdOfOld[c.rem], .sur = newNodeIdOfOld[c.sur], .score = c.score, .redDeg = c.redDeg, .distTwo = c.distTwo, .processed = c.processed });
             }
 
@@ -198,8 +206,8 @@ pub const ExactBranchAndBound = struct {
         var smaller_storage = try self.allocator.alloc(Smaller, 1);
         defer self.allocator.free(smaller_storage);
 
-        var smaller = &smaller_storage[0];
-        smaller.* = Smaller.new();
+        var smaller = try Smaller.new(self.allocator);
+        defer smaller.deinit();
 
         // copy edges; TODO: this can be implement with parallel bit shifts
         {
@@ -221,7 +229,7 @@ pub const ExactBranchAndBound = struct {
 
         const old_contractions = self.working_seq.items.len;
         const upper_before = self.upper_excl;
-        var result = try self.solve(Smaller, smaller, slack);
+        var result = try self.solve(Smaller, &smaller, slack);
         std.debug.assert(self.upper_excl < upper_before);
 
         for (self.best_seq.items[old_contractions..]) |*ctr| {
@@ -258,12 +266,11 @@ pub const ExactBranchAndBound = struct {
         }
 
         if (FeatureInitialPruning and self.num_calls == 1) {
-            var local_graph = try self.allocator.alloc(Graph, 1);
-            defer self.allocator.free(local_graph);
-            local_graph[0] = graph.*;
+            var local_graph = try graph.copy();
+            defer local_graph.deinit();
 
-            try self.initial_kernelization(Graph, &local_graph[0], slack);
-            return self.solve(Graph, &local_graph[0], slack);
+            try self.initial_kernelization(Graph, &local_graph, slack);
+            return self.solve(Graph, &local_graph, slack);
         }
 
         if (FeatureReportProgress > 0 and self.num_calls % FeatureReportProgress == 0) {
@@ -309,10 +316,54 @@ pub const ExactBranchAndBound = struct {
 
     fn initial_kernelization(self: *Self, comptime Graph: type, graph: *Graph, slack: Node) !void {
         _ = slack;
-        while (FeatureLeafNodePruning and try self.eliminate_leafs(Graph, graph)) {}
+        if (!FeatureLeafNodePruning) {
+            return;
+        }
+
+        while (true) {
+            _ = try self.pruneLeafs(Graph, graph);
+            if (try self.pruneTwins(Graph, graph)) {
+                continue;
+            }
+
+            break;
+        }
     }
 
-    fn eliminate_leafs(
+    noinline fn pruneTwins(
+        self: *Self,
+        comptime Graph: type,
+        graph: *Graph,
+    ) anyerror!bool {
+        if (!FeatureTwinPruning) {
+            return false;
+        }
+
+        var u_iter = graph.has_neighbors.iter_set();
+        while (u_iter.next()) |u| {
+            var v_iter = graph.constTwoNeighbors(u).iter_set();
+
+            while (v_iter.next()) |v| {
+                if (v <= u) {
+                    continue;
+                }
+
+                var red = graph.redNeighborsAfterMerge(u, v);
+                if (red.is_equal(graph.constRedNeighbors(u)) or
+                    red.is_equal(graph.constRedNeighbors(v)))
+                {
+                    std.debug.print("Initial prune twin\n", .{});
+                    graph.mergeNodes(u, v, &red);
+                    self.working_seq.appendAssumeCapacity(Contraction{ .rem = u, .sur = v });
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    noinline fn pruneLeafs(
         self: *Self,
         comptime Graph: type,
         graph: *Graph,
@@ -344,6 +395,7 @@ pub const ExactBranchAndBound = struct {
             var leafs_iter = leafs_at_node.iter_set();
             const survivor = leafs_iter.next().?;
             while (leafs_iter.next()) |rem| {
+                std.debug.print("Initial leaf {d} -> {d}\n", .{ rem, survivor });
                 try self.working_seq.append(Contraction{ .rem = rem, .sur = survivor });
                 graph.mergeNodes(rem, survivor, null); // TODO: this can be made faster by removing the Edge
                 change = true;
@@ -362,6 +414,7 @@ fn Frame(comptime Graph: type) type {
         candidates: std.ArrayList(ContraScore),
 
         input_graph: *const Graph,
+        mergables: Graph.BitSet,
 
         work_graph: Graph,
         work_tww: Node,
@@ -372,16 +425,21 @@ fn Frame(comptime Graph: type) type {
         fn new(solver: *ExactBranchAndBound, graph: *const Graph, slack: Node) !Self {
             var n = @max(4, @as(usize, graph.has_neighbors.cardinality()));
 
-            var candidates = try std.ArrayList(ContraScore).initCapacity(solver.allocator, (n + 1) / 2 * n);
+            var candidates = try std.ArrayList(ContraScore).initCapacity(solver.allocator, (n + 1) * n / 2);
             errdefer candidates.deinit();
+
+            var work_graph = try Graph.new(solver.allocator);
+            errdefer work_graph.deinit();
 
             return Self{
                 .context = solver,
 
                 .input_graph = graph,
+                .mergables = undefined,
+
                 .candidates = candidates,
 
-                .work_graph = undefined,
+                .work_graph = work_graph,
                 .work_contracted = Graph.BitSet.new(),
                 .slack = slack,
                 .work_tww = slack,
@@ -391,6 +449,7 @@ fn Frame(comptime Graph: type) type {
         }
 
         fn deinit(self: *Self) void {
+            self.work_graph.deinit();
             self.candidates.deinit();
         }
 
@@ -429,14 +488,21 @@ fn Frame(comptime Graph: type) type {
                     continue;
                 }
 
+                std.debug.assert(self.input_graph.has_neighbors.isSet(c.rem) and self.input_graph.has_neighbors.isSet(c.sur));
+
                 // undo all changes possibly made by an earlier iteration
                 try self.context.working_seq.resize(initial_seq_len);
-                self.work_graph = self.input_graph.*;
+                self.work_graph.copyFrom(self.input_graph);
                 self.work_tww = self.slack;
                 self.work_contracted.unsetAll();
 
                 try self.contractNodes(c.rem, c.sur, !c.distTwo);
-                std.debug.assert(self.context.lower_bound_mode or c.redDeg <= self.work_tww);
+
+                if (!((self.lower_bound_mode and self.work_tww == 0) or (c.redDeg <= self.work_tww))) {
+                    std.debug.print("lbm: {d} red: {d} tww: {d} dist2: {any}", .{ @boolToInt(self.lower_bound_mode), c.redDeg, self.work_tww, c.distTwo });
+                }
+
+                std.debug.assert((self.lower_bound_mode and self.work_tww == 0) or (c.redDeg <= self.work_tww));
 
                 if (self.work_tww >= self.context.upper_excl) {
                     continue;
@@ -452,6 +518,11 @@ fn Frame(comptime Graph: type) type {
                 defer if (FeatureReuseCandidates and !self.lower_bound_mode) {
                     _ = self.context.candidate_lists.pop();
                 };
+
+                if (FeatureComplements and (Graph.NumNodes > 8 and self.work_graph.numEdgesInComplement() * 5 < self.work_graph.numberOfEdges() * 4)) {
+                    std.debug.print("Complement!", .{});
+                    self.work_graph.complement();
+                }
 
                 const tww_from_rec = self.context.solve(Graph, &self.work_graph, self.work_tww) catch |e| {
                     if (e == SolverError.Infeasable) {
@@ -473,13 +544,18 @@ fn Frame(comptime Graph: type) type {
         }
 
         fn contractNodes(self: *Self, rem: Node, sur: Node, atleast_dist_three: bool) !void {
-            if (self.context.lower_bound_mode) {
+            std.debug.assert(self.work_graph.deg(rem) > 0);
+            std.debug.assert(self.work_graph.deg(sur) > 0);
+
+            if (self.lower_bound_mode) {
+                self.work_contracted.assignOr(self.work_graph.constTwoNeighbors(rem));
+
                 self.work_graph.removeEdgesAtNode(rem);
             } else {
                 self.work_graph.mergeNodes(rem, sur, null);
                 self.work_tww = @max(self.work_tww, self.work_graph.redDeg(sur));
                 self.work_tww = @max(self.work_tww, self.work_graph.maxRedDegreeIn(self.work_graph.constRedNeighbors(sur)));
-                self.work_contracted.assignOr(self.work_graph.constNeighbors(sur));
+                self.work_contracted.assignOr(self.work_graph.constTwoNeighbors(sur));
                 _ = self.work_contracted.setBit(sur);
             }
 
@@ -489,12 +565,19 @@ fn Frame(comptime Graph: type) type {
 
             self.context.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = sur });
 
-            if (!atleast_dist_three) {
-                _ = try self.eliminate_leafs_at(sur);
-            }
+            while (true) {
+                if (!atleast_dist_three) {
+                    _ = try self.pruneLeafsAt(sur);
+                }
 
-            _ = try self.eliminate_twins_at(sur);
-            self.tinyGraphBelowSlack();
+                if (try self.pruneTwinsAt(sur)) {
+                    continue;
+                }
+
+                self.tinyGraphBelowSlack();
+
+                break;
+            }
         }
 
         fn tinyGraphBelowSlack(self: *Self) void {
@@ -508,6 +591,7 @@ fn Frame(comptime Graph: type) type {
 
             var iter = self.work_graph.has_neighbors.iter_set();
             var sur = iter.next().?;
+            std.debug.print("Collaps tiny graph with n={d} tww={d}\n", .{ self.work_graph.has_neighbors.cardinality(), self.work_tww });
 
             while (iter.next()) |rem| {
                 self.work_graph.removeEdgesAtNode(rem);
@@ -516,7 +600,14 @@ fn Frame(comptime Graph: type) type {
         }
 
         fn computeCandidates(self: *Self) void {
-            var has_neighbors = self.input_graph.has_neighbors;
+            var has_neighbors: *const Graph.BitSet = undefined;
+            if (FeatureSkipPathNodes) {
+                self.computeMergeables();
+                has_neighbors = &self.mergables;
+                std.debug.assert(self.mergables.is_subset_of(&self.input_graph.has_neighbors));
+            } else {
+                has_neighbors = &self.input_graph.has_neighbors;
+            }
 
             const depth = self.context.candidate_lists.items.len;
             if (!FeatureReuseCandidates or self.lower_bound_mode or depth == 0) {
@@ -533,7 +624,7 @@ fn Frame(comptime Graph: type) type {
                 var prev: *const CandidateListRef = &self.context.candidate_lists.items[depth - 1];
                 std.debug.assert(prev.num_nodes == Graph.NumNodes);
 
-                var invalid = @ptrCast(*Graph.BitSet, @alignCast(@alignOf(Graph.BitSet), prev.invalid));
+                var invalid: *const Graph.BitSet = @ptrCast(*Graph.BitSet, @alignCast(@alignOf(Graph.BitSet), prev.invalid));
 
                 for (prev.candidates) |c| {
                     const rem = c.rem;
@@ -553,6 +644,10 @@ fn Frame(comptime Graph: type) type {
 
                 var outer_iter = invalid.iter_set();
                 while (outer_iter.next()) |u| {
+                    if (!self.input_graph.has_neighbors.isSet(u)) {
+                        continue;
+                    }
+
                     var inner_iter = has_neighbors.iter_set();
                     while (inner_iter.next()) |v| {
                         if (u < v) {
@@ -582,40 +677,45 @@ fn Frame(comptime Graph: type) type {
             }
         }
 
+        fn computeMergeables(self: *Self) void {
+            self.mergables = Graph.BitSet.new();
+            var iter = self.input_graph.has_neighbors.iter_set();
+            while (iter.next()) |u| {
+                if (self.input_graph.deg(u) != 2 or !self.input_graph.constRedNeighbors(u).areAllUnset()) {
+                    self.mergables.assignOr(self.input_graph.constTwoNeighbors(u));
+                }
+            }
+
+            if (self.mergables.areAllUnset()) {
+                // happens for a graph consisting of disjoint cycles
+                self.mergables = self.input_graph.has_neighbors;
+            }
+        }
+
         fn appendCandidatePair(self: *Self, u: Node, v: Node) void {
             std.debug.assert(u != v);
 
-            if (self.input_graph.constTwoNeighbors(u).isSet(v)) {
-                var red_degree = self.input_graph.redDegreeInNeighborhoodAfterMerge(u, v);
+            var distAtmostTwo = self.input_graph.constTwoNeighbors(u).isSet(v);
+            var red_degree = Graph.NumNodes;
 
-                if (FeatureSkipInfeasibleCandidatesEarly and red_degree >= self.context.upper_excl) {
-                    return;
-                }
-
-                self.candidates.appendAssumeCapacity(ContraScore{
-                    .score = red_degree, //
-                    .redDeg = red_degree,
-                    .rem = v,
-                    .sur = u,
-                    .distTwo = true,
-                    .processed = false,
-                });
+            if (distAtmostTwo) {
+                red_degree = self.input_graph.redDegreeInNeighborhoodAfterMerge(u, v);
             } else {
-                var red_degree = self.input_graph.deg(u) + self.input_graph.deg(v);
-
-                if (FeatureSkipInfeasibleCandidatesEarly and red_degree >= self.context.upper_excl) {
-                    return;
-                }
-
-                self.candidates.appendAssumeCapacity(ContraScore{
-                    .score = red_degree, //
-                    .redDeg = red_degree,
-                    .rem = v,
-                    .sur = u,
-                    .distTwo = false,
-                    .processed = false,
-                });
+                red_degree = self.input_graph.deg(u) + self.input_graph.deg(v);
             }
+
+            if (FeatureSkipInfeasibleCandidatesEarly and red_degree >= self.context.upper_excl) {
+                return;
+            }
+
+            self.candidates.appendAssumeCapacity(ContraScore{
+                .score = red_degree, //
+                .redDeg = red_degree,
+                .rem = v,
+                .sur = u,
+                .distTwo = distAtmostTwo,
+                .processed = false,
+            });
         }
 
         fn registerSolution(self: *Self) void {
@@ -627,7 +727,7 @@ fn Frame(comptime Graph: type) type {
             self.context.best_seq.appendSliceAssumeCapacity(self.context.working_seq.items);
         }
 
-        noinline fn eliminate_leafs_at(self: *Self, u: Node) !bool {
+        noinline fn pruneLeafsAt(self: *Self, u: Node) !bool {
             if (!FeatureLeafNodePruning) {
                 return false;
             }
@@ -662,50 +762,27 @@ fn Frame(comptime Graph: type) type {
             return true;
         }
 
-        noinline fn eliminate_twins_at(self: *Self, u: Node) anyerror!bool {
+        noinline fn pruneTwinsAt(self: *Self, u: Node) anyerror!bool {
             if (!FeatureTwinPruning) {
                 return false;
             }
 
             var two_neighbors = self.work_graph.constTwoNeighbors(u);
-            if (two_neighbors.cardinality() > 10) {
+            if (two_neighbors.cardinality() > 50) {
                 return false;
             }
 
             var it1 = two_neighbors.iter_set();
             while (it1.next()) |v| {
                 var it2 = it1;
-                var deg_v = self.work_graph.deg(v);
-                std.debug.assert(deg_v > 0);
-
                 while (it2.next()) |w| {
-                    std.debug.assert(v != w);
-                    var a = w; // superset
-                    var b = v; // subset
-                    if (deg_v >= self.work_graph.deg(w)) {
-                        a = v;
-                        b = w;
-                    }
-                    std.debug.assert(self.work_graph.deg(w) > 0);
-
-                    var prev = self.work_graph.addEdge(a, b, mg.Color.Black);
-
-                    if (self.work_graph.constNeighbors(b).is_subset_of(self.work_graph.constNeighbors(a)) and
-                        self.work_graph.constRedNeighbors(b).is_subset_of(self.work_graph.constRedNeighbors(a)))
+                    var red = self.work_graph.redNeighborsAfterMerge(v, w);
+                    if (red.is_equal(self.work_graph.constRedNeighbors(v)) or
+                        red.is_equal(self.work_graph.constRedNeighbors(w)))
                     {
-                        var red = self.work_graph.redNeighborsAfterMerge(a, b);
-                        std.debug.assert(red.is_equal(self.work_graph.constRedNeighbors(a)));
-
-                        _ = try self.contractNodes(a, b, false);
+                        //std.debug.print("Twin be gone", .{});
+                        try self.contractNodes(v, w, false);
                         return true;
-                    }
-
-                    if (prev) |p| {
-                        if (p.isRed()) {
-                            _ = self.work_graph.addEdge(a, b, mg.Color.Red);
-                        }
-                    } else {
-                        _ = self.work_graph.removeEdge(a, b);
                     }
                 }
             }
@@ -746,10 +823,17 @@ pub fn solveCCExactly(comptime T: type, component: *cc.ConnectedComponent(T), al
 pub fn findLowerBound(comptime N: u32, graph: *const mg.MatrixGraph(N), allocator: std.mem.Allocator, budget_ms: u64, lower: Node, upper: Node) !Node {
     var lower_bound = lower;
 
+    var n = graph.has_neighbors.cardinality();
+    if (n < @min(20, 4 * upper)) {
+        // if the graph is too small, we solve it directly
+        // if its way too large, no chance we can solve it within the budget
+        return lower;
+    }
+
     var start_time: std.time.Instant = try std.time.Instant.now();
     var rng = std.rand.DefaultPrng.init(0x1273_5412_327a_8431);
 
-    while (true) {
+    for (0..100) |_| {
         if ((try std.time.Instant.now()).since(start_time) > budget_ms * 1000_000) {
             return lower_bound;
         }
@@ -762,19 +846,147 @@ pub fn findLowerBound(comptime N: u32, graph: *const mg.MatrixGraph(N), allocato
         defer solver.deinit();
 
         solver.setLowerBound(lower_bound);
-        solver.setUpperBound(upper + 1);
-        solver.setTimeout(@max(budget_ms / 10, 1000));
+        solver.setUpperBound(upper);
+        solver.setTimeout(@max(budget_ms / 3, 1000));
         solver.enableLowerBoundMode(&rng);
 
-        var this_lower = solver.solve(mg.MatrixGraph(N), graph, 0) catch continue;
+        var this_lower = solver.solve(mg.MatrixGraph(N), graph, 0) catch |e| {
+            if (e == SolverError.Infeasable) {
+                std.debug.print(" Found optimal LB!\n", .{});
+                return upper;
+            }
+            continue;
+        };
         var now = try std.time.Instant.now();
         std.debug.print(" Established LB: {d:>8} (best: {d:>8}) gap: {d:>8} in {d:>6}ms\n", .{ this_lower, lower_bound, upper - this_lower, now.since(start_time) / 1000_000 });
         lower_bound = @max(this_lower, lower_bound);
     }
+
+    return lower_bound;
+}
+
+pub fn findLowerBoundSubgraph(comptime N: u32, graph: *const mg.MatrixGraph(N), allocator: std.mem.Allocator, budget_ms: u64, lower: Node, upper: Node) !Node {
+    const Graph = mg.MatrixGraph(N);
+    var lower_bound = lower;
+
+    var n = graph.has_neighbors.cardinality();
+    if (n < @min(20, 4 * upper)) {
+        // if the graph is too small, we solve it directly
+        // if its way too large, no chance we can solve it within the budget
+        return lower;
+    }
+
+    var start_time: std.time.Instant = try std.time.Instant.now();
+    var rng = std.rand.DefaultPrng.init(0x1273_5412_327a_8431);
+    var random = rng.random();
+
+    var nodes = Graph.BitSet.new();
+    var max_size = @max(4 * upper, n / 100);
+
+    while (true) {
+        if ((try std.time.Instant.now()).since(start_time) > budget_ms * 1000_000) {
+            return lower_bound;
+        }
+
+        if (lower_bound >= upper) {
+            return lower_bound;
+        }
+
+        nodes.unsetAll();
+        while (true) {
+            var node = random.intRangeLessThan(u32, 0, graph.numberOfNodes());
+            if (graph.has_neighbors.isSet(node)) {
+                _ = nodes.setBit(node);
+                break;
+            }
+        }
+
+        while (nodes.cardinality() * 3 < max_size * 2) {
+            var prev = nodes;
+            var iter = prev.iter_set();
+            while (iter.next()) |u| {
+                nodes.assignOr(graph.constNeighbors(u));
+            }
+        }
+
+        while (nodes.cardinality() * 2 > max_size * 3) {
+            var node = random.intRangeLessThan(u32, 0, graph.numberOfNodes());
+            _ = nodes.unsetBit(node);
+        }
+
+        lower_bound = subgraphLB(N, allocator, graph, &nodes, budget_ms / 10, lower_bound, upper) catch continue;
+    }
+
+    return lower_bound;
+}
+
+pub fn findLowerBoundWithCS(comptime N: u32, graph: *const mg.MatrixGraph(N), cs: []Contraction, allocator: std.mem.Allocator, budget_ms: u64, lower: Node, upper: Node) !Node {
+    const Graph = mg.MatrixGraph(N);
+
+    var local_graph = try graph.copy();
+    defer local_graph.deinit();
+    var nodes_used = Graph.BitSet.new();
+
+    {
+        var tww: Node = 0;
+        for (cs) |c| {
+            local_graph.mergeNodes(c.rem, c.sur, null);
+            _ = nodes_used.setBit(c.rem);
+            _ = nodes_used.setBit(c.sur);
+            nodes_used.assignOr(local_graph.constRedNeighbors(c.sur));
+
+            tww = @max(tww, local_graph.maxRedDegree());
+            if (tww == upper) {
+                break;
+            }
+        } else {
+            std.debug.print("Supplied contraction sequence is better than upper bound. Expected: {d} Found: {d}\n", .{ upper, tww });
+            @panic("");
+        }
+    }
+
+    return subgraphLB(N, allocator, graph, &nodes_used, budget_ms, lower, upper);
+}
+
+fn subgraphLB(comptime N: u32, allocator: std.mem.Allocator, graph: *const mg.MatrixGraph(N), nodes: *const mg.MatrixGraph(N).BitSet, budget_ms: u64, lower: Node, upper: Node) !Node {
+    const Graph = mg.MatrixGraph(N);
+
+    var local_graph = try graph.copy();
+    defer local_graph.deinit();
+    {
+        var it = nodes.iter_unset();
+        while (it.next()) |i| {
+            local_graph.removeEdgesAtNode(i);
+        }
+    }
+
+    std.debug.print("Attempt LB with subgraph n={d} m={d} lower={d} upper={d}\n", .{ nodes.cardinality(), local_graph.numberOfEdges(), lower, upper });
+
+    var solver = ExactBranchAndBound.new(allocator, local_graph.numberOfNodes()) catch {
+        return lower;
+    };
+    defer solver.deinit();
+
+    solver.setLowerBound(lower);
+    solver.setUpperBound(upper);
+    solver.setTimeout(budget_ms);
+
+    var tww = solver.solve(Graph, &local_graph, 0) catch |e| blk: {
+        if (e == SolverError.Infeasable) {
+            std.debug.print(" Found optimal LB via CS!\n", .{});
+            return upper;
+        }
+        break :blk lower;
+    };
+
+    std.debug.print(" Found LB via subgraph with n={d}: {d}!\n", .{ nodes.cardinality(), tww });
+
+    return @max(lower, tww);
 }
 
 fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) void {
     const T = @TypeOf(context.*).IntType;
+    var cs: *contr.ContractionSequence(T) = &context.cc.best_contraction_sequence;
 
     std.debug.print("Invoke exact solver on n={d}, m={d}, lower={d}, upper={d}, maxRed={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges(), context.lower, context.upper, graph.maxRedDegree() });
 
@@ -784,11 +996,36 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
     //var hpa_allocator = std.heap.FixedBufferAllocator.init(large_buffer);
     //var hpa = hpa_allocator.allocator();
 
-    var lower = findLowerBound(@TypeOf(graph).NumNodes, &graph, context.allocator, 10000, context.lower, context.upper) catch context.lower;
-    std.debug.assert(lower >= context.lower);
-    if (lower >= context.upper) {
-        context.result = SolverError.Infeasable;
-        return;
+    var lower = context.lower;
+    if (true) {
+        if (false) {
+            var inner_cs = context.allocator.alloc(Contraction, cs.list.len) catch return;
+            defer context.allocator.free(inner_cs);
+
+            for (cs.list, inner_cs) |o, *i| {
+                i.* = Contraction{ .rem = o.erased, .sur = o.survivor };
+            }
+
+            lower = findLowerBoundWithCS(@TypeOf(graph).NumNodes, &graph, inner_cs, context.allocator, 10_000, context.lower, context.upper) catch context.lower;
+        }
+        if (lower >= context.upper) {
+            context.result = SolverError.Infeasable;
+            return;
+        }
+
+        lower = findLowerBoundSubgraph(@TypeOf(graph).NumNodes, &graph, context.allocator, 10_000, context.lower, context.upper) catch context.lower;
+        std.debug.assert(lower >= context.lower);
+        if (lower >= context.upper) {
+            context.result = SolverError.Infeasable;
+            return;
+        }
+
+        lower = findLowerBound(@TypeOf(graph).NumNodes, &graph, context.allocator, 10_000, context.lower, context.upper) catch context.lower;
+        std.debug.assert(lower >= context.lower);
+        if (lower >= context.upper) {
+            context.result = SolverError.Infeasable;
+            return;
+        }
     }
 
     var solver = ExactBranchAndBound.new(context.allocator, graph.numberOfNodes()) catch |e| {
@@ -806,11 +1043,12 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
         return;
     };
 
+    std.debug.print("Nodes: {d} CS: {d}", .{ graph.has_neighbors.cardinality(), solver.best_seq.items.len });
+
     context.result = tww;
 
     // update CC
     context.cc.tww = @intCast(T, tww);
-    var cs = &context.cc.best_contraction_sequence;
     cs.reset();
 
     const OuterContraction = contr.Contraction(T);

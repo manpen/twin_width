@@ -292,6 +292,11 @@ fn FixedSizeSetImpl(comptime T: type, comptime size: usize, comptime store_cardi
             }
             std.debug.print("\n", .{});
         }
+
+        pub fn debugPrintLabel(self: *const Self, label: []const u8) void {
+            std.debug.print("{s}", .{label});
+            self.debugPrint();
+        }
     };
 }
 

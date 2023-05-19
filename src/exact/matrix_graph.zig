@@ -35,25 +35,46 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
         pub const Node = u32;
         pub const BitSet = FixedSizeSet(num_nodes);
 
+        allocator: std.mem.Allocator,
         num_edges: u32,
-        matrix: [3 * num_nodes]BitSet,
+        matrix: []BitSet,
         has_neighbors: BitSet,
         invalid_two_neighbors: BitSet,
         batch_updates: bool,
 
-        pub fn new() Self {
-            var graph = Self{
+        pub fn new(allocator: std.mem.Allocator) !Self {
+            var matrix = try allocator.alloc(BitSet, 3 * num_nodes);
+            errdefer allocator.free(matrix);
+
+            const empty = FixedSizeSet(num_nodes).new();
+            for (matrix) |*r| r.* = empty;
+
+            return Self{
+                .allocator = allocator,
                 .num_edges = 0,
-                .matrix = undefined,
+                .matrix = matrix,
                 .has_neighbors = BitSet.new(),
                 .invalid_two_neighbors = BitSet.newAllSet(),
                 .batch_updates = false,
             };
+        }
 
-            const empty = FixedSizeSet(num_nodes).new();
-            for (&graph.matrix) |*r| r.* = empty;
+        pub fn deinit(self: *const Self) void {
+            self.allocator.free(self.matrix);
+        }
 
-            return graph;
+        pub fn copy(self: *const Self) !Self {
+            var result = try Self.new(self.allocator);
+            result.copyFrom(self);
+            return result;
+        }
+
+        pub fn copyFrom(self: *Self, other: *const Self) void {
+            self.num_edges = other.num_edges;
+            self.has_neighbors = other.has_neighbors;
+            self.invalid_two_neighbors = other.invalid_two_neighbors;
+            self.batch_updates = other.batch_updates;
+            std.mem.copy(BitSet, self.matrix, other.matrix);
         }
 
         pub inline fn numberOfNodes(self: *const Self) Node {
@@ -411,6 +432,51 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             var output: Digest = undefined;
             digest.final(&output);
             return output;
+        }
+
+        pub fn numEdgesInComplement(self: *const Self) u32 {
+            var totalNodes = self.has_neighbors.cardinality();
+            if (totalNodes < 2) {
+                return 0;
+            }
+
+            var redDegreeSum: u32 = 0;
+            var u: u32 = 0;
+            while (u < NumNodes) : (u += 1) {
+                redDegreeSum = self.redDeg(u);
+            }
+
+            var blackEdges = self.numberOfEdges() - redDegreeSum / 2;
+            var totalEdges = totalNodes * (totalNodes - 1) / 2;
+            return totalEdges - blackEdges;
+        }
+
+        pub fn complement(self: *Self) void {
+            self.beginBatchUpdates();
+
+            var u: u32 = 0;
+            var degreeSum: u32 = 0;
+            while (u < NumNodes) : (u += 1) {
+                if (!self.has_neighbors.isSet(u)) {
+                    continue;
+                }
+
+                self.neighbors(u).assignXor(&self.has_neighbors);
+                self.neighbors(u).assignOr(self.constRedNeighbors(u));
+
+                var d = self.deg(u);
+
+                if (d == 0) {
+                    _ = self.has_neighbors.unsetBit(u);
+                }
+
+                degreeSum += d;
+            }
+
+            self.num_edges = degreeSum / 2;
+
+            self.endBatchUpdates();
+            self.assertIsConsistent();
         }
     };
 }

@@ -61,6 +61,8 @@ fn load_best_known(filename: []const u8) !?u32 {
 }
 
 pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, filename: []const u8, short_name: []const u8) !T {
+    std.debug.print("Start solver for {s}\n", .{filename});
+
     var timer = try std.time.Instant.now();
     var pace_part = try pace.Pace2023Fmt(T).fromFile(allocator, filename);
     defer pace_part.deinit(allocator);
@@ -87,7 +89,17 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
 
     var best_known = try load_best_known(short_name);
 
-    std.debug.print("{s:<25} | {:>8} | {:>8} | {:>4} ({?:>4}) | {:>6}ms\n", .{ short_name, loaded_graph.number_of_nodes, loaded_graph.number_of_edges, tww, best_known, elapsed });
+    var cmp: u8 = '?';
+    if (best_known) |best| {
+        cmp = '!';
+        if (tww < best) {
+            cmp = '<';
+        } else if (tww == best) {
+            cmp = '=';
+        }
+    }
+
+    std.debug.print("{s:<25} | {:>8} | {:>8} | {:>4} {c} {?:>4} | {:>6}ms\n", .{ short_name, loaded_graph.number_of_nodes, loaded_graph.number_of_edges, tww, cmp, best_known, elapsed });
 
     if (best_known) |value| {
         if (tww > value) {
@@ -142,7 +154,7 @@ pub fn main() !void {
         return;
     }
 
-    std.debug.print("{s:<25} | {s:>8} | {s:>8} | {s:>4} ({s:>4}) | {s:>6}\n", .{ "filename", "nodes", "edges", "tww", "best", "time (ms)" });
+    std.debug.print("{s:<25} | {s:>8} | {s:>8} | {s:>4} {s} {s:>4} | {s:>6}\n", .{ "filename", "nodes", "edges", "tww", "?", "best", "time (ms)" });
 
     var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator, 100);
     while (try dirit.next()) |item| {

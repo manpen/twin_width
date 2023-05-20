@@ -426,9 +426,69 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             }
         }
 
-        pub fn hash(self: *const Self) Digest {
+        pub fn hashMatrix(self: *const Self) Digest {
             var digest = DigestAlgo.init(.{});
             digest.update(std.mem.sliceAsBytes(self.matrix[0..]));
+            var output: Digest = undefined;
+            digest.final(&output);
+            return output;
+        }
+
+        fn murmur64(input: u64) u64 {
+            var h = input;
+            h ^= h >> 33;
+            h = @mulWithOverflow(h, 0xff51afd7ed558ccd)[0];
+            h ^= h >> 33;
+            h = @mulWithOverflow(h, 0xc4ceb9fe1a85ec53)[0];
+            h ^= h >> 33;
+            return h;
+        }
+
+        pub fn hashWF(self: *const Self) Digest {
+            var nodeHash: [NumNodes]WFScore = undefined;
+            var tmp: [NumNodes]u64 = undefined;
+            {
+                var u: u32 = 0;
+                while (u < NumNodes) : (u += 1) {
+                    var d = self.deg(u);
+                    var score = murmur64(d | (@intCast(u64, self.redDeg(u)) << 32));
+
+                    nodeHash[u] = WFScore{
+                        .node = u,
+                        .deg = d,
+                        .score = score,
+                    };
+                    tmp[u] = score;
+                }
+            }
+
+            var round = self.has_neighbors.cardinality();
+            while (round > 0) : (round -= 1) {
+                std.sort.sort(WFScore, nodeHash[0..], {}, cmpWFScore);
+
+                var round_hash = murmur64(round);
+
+                for (nodeHash) |in| {
+                    var h = murmur64(in.score ^ round_hash);
+                    var hh = murmur64(h);
+
+                    var neigh_it = self.constNeighbors(in.node).iter_set();
+                    while (neigh_it.next()) |v| {
+                        tmp[v] = murmur64(tmp[v] ^
+                            (if (self.constRedNeighbors(in.node).isSet(v)) h else hh));
+                    }
+                }
+
+                var u: u32 = 0;
+                while (u < NumNodes) : (u += 1) {
+                    nodeHash[u].score = tmp[u];
+                }
+            }
+
+            std.sort.sort(WFScore, nodeHash[0..], {}, cmpWFScore);
+
+            var digest = DigestAlgo.init(.{});
+            digest.update(std.mem.sliceAsBytes(tmp[0..]));
             var output: Digest = undefined;
             digest.final(&output);
             return output;
@@ -479,6 +539,16 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             self.assertIsConsistent();
         }
     };
+}
+
+const WFScore = struct {
+    node: u32,
+    deg: u32,
+    score: u64,
+};
+
+fn cmpWFScore(_: void, a: WFScore, b: WFScore) bool {
+    return a.deg < b.deg or (a.deg == b.deg and (a.score < b.score or (a.score == b.score and a.node < b.node)));
 }
 
 test "New Matrix Graph" {

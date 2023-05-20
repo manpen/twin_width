@@ -31,23 +31,41 @@ const CandidateListRef = struct {
 };
 
 const FeatureReuseCandidates: bool = true;
-const FeatureUseInfeasibleCache: bool = true;
 const FeatureShrinkGraph: bool = true;
 const FeatureSkipProcessed: bool = true;
 const FeatureSkipInfeasibleCandidatesEarly: bool = true;
 const FeatureSkipPathNodes: bool = true;
 const FeatureComplements: bool = false; // BROKEN
+const FeatureCriticalCandidates: bool = true; // skips dist>3 pairs with critical black neighbor
+
+const FeaturePessimiticCandidateAllocation: bool = false;
+
+const FeatureUseInfeasibleCache: bool = true;
+const FeatureUseSolutionCache: bool = false;
+const FeatureUseWFHash: bool = false;
 
 const FeatureReportProgress: u32 = 1 * 100000; // set to 0 to disable
 
 const FeatureInitialPruning: bool = true;
 const FeatureLeafNodePruning: bool = true;
 const FeatureTwinPruning: bool = true;
+const FeatureOuterPathPruning: bool = true;
 const FeatureTinyGraphBelowSlack: bool = true; // almost no effect, as it only helps, if we're about to find a solution
+
+const FeatureTryLBFirst: bool = true;
+const BudgetHeuCSLB: u64 = 0; // ms
+const BudgetSubgraphLB: u64 = 10_000; // ms
+const BudgetPruningLB: u64 = 0; // ms
+
+const SolSummary = struct {
+    tww: Node,
+    slack: Node,
+};
 
 pub const ExactBranchAndBound = struct {
     const Self = @This();
     const InfeasibleCache = std.AutoHashMap(mg.Digest, void);
+    const SolutionCache = std.AutoHashMap(mg.Digest, SolSummary);
 
     allocator: std.mem.Allocator,
     lower: Node,
@@ -64,6 +82,7 @@ pub const ExactBranchAndBound = struct {
     time_last_report: std.time.Instant,
 
     infeasible_cache: InfeasibleCache,
+    solution_cache: SolutionCache,
     candidate_lists: std.ArrayList(CandidateListRef),
 
     start_time: std.time.Instant,
@@ -82,10 +101,16 @@ pub const ExactBranchAndBound = struct {
         var candidate_lists = try std.ArrayList(CandidateListRef).initCapacity(allocator, @boolToInt(FeatureReuseCandidates) * (20 + number_of_nodes));
         errdefer candidate_lists.deinit();
 
-        var cache = InfeasibleCache.init(allocator);
-        errdefer cache.deinit();
+        var infeasible_cache = InfeasibleCache.init(allocator);
+        errdefer infeasible_cache.deinit();
         if (FeatureUseInfeasibleCache) {
-            try cache.ensureTotalCapacity((2 << 30) / @sizeOf(mg.Digest));
+            try infeasible_cache.ensureTotalCapacity((2 << 30) / @sizeOf(mg.Digest));
+        }
+
+        var solution_cache = SolutionCache.init(allocator);
+        errdefer solution_cache.deinit();
+        if (FeatureUseInfeasibleCache) {
+            try solution_cache.ensureTotalCapacity((2 << 30) / @sizeOf(mg.Digest));
         }
 
         var now = try std.time.Instant.now();
@@ -101,7 +126,8 @@ pub const ExactBranchAndBound = struct {
             .recursion_depth = 0,
             .time_last_report = now,
             .smallest_depth_last_report = 0,
-            .infeasible_cache = cache,
+            .infeasible_cache = infeasible_cache,
+            .solution_cache = solution_cache,
             .candidate_lists = candidate_lists,
             .start_time = now,
             .timeout_ms = null,
@@ -113,6 +139,7 @@ pub const ExactBranchAndBound = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        self.solution_cache.deinit();
         self.infeasible_cache.deinit();
         self.candidate_lists.deinit();
         self.best_seq.deinit();
@@ -259,11 +286,11 @@ pub const ExactBranchAndBound = struct {
         defer self.smallest_depth_last_report = @min(self.smallest_depth_last_report, self.recursion_depth);
         defer self.recursion_depth -= 1;
 
-        if (self.lower_bound_mode and n < self.upper_excl * 4) {
-            std.debug.assert(slack == 0);
-            std.debug.print("Disable lower bound mode\n", .{});
-            self.lower_bound_mode = false;
-        }
+        // if (self.lower_bound_mode and n < self.upper_excl * 4) {
+        //    std.debug.assert(slack == 0);
+        //    std.debug.print("Disable lower bound mode\n", .{});
+        //    self.lower_bound_mode = false;
+        //}
 
         if (FeatureInitialPruning and self.num_calls == 1) {
             var local_graph = try graph.copy();
@@ -293,10 +320,25 @@ pub const ExactBranchAndBound = struct {
         }
 
         var digest: mg.Digest = undefined;
-        if (FeatureUseInfeasibleCache) {
-            digest = graph.hash();
+        if (FeatureUseInfeasibleCache or FeatureUseSolutionCache) {
+            if (FeatureUseWFHash) {
+                digest = graph.hashWF();
+            } else {
+                digest = graph.hashMatrix();
+            }
+
             if (self.infeasible_cache.contains(digest)) {
                 return SolverError.Infeasable;
+            }
+
+            if (self.solution_cache.get(digest)) |sol| {
+                if (sol.tww < self.upper_excl) {
+                    return sol.tww;
+                }
+
+                if (sol.slack < sol.tww and sol.tww >= self.upper_excl) {
+                    return SolverError.Infeasable;
+                }
             }
         }
 
@@ -311,10 +353,16 @@ pub const ExactBranchAndBound = struct {
             try self.infeasible_cache.put(digest, {});
         }
 
+        if (FeatureUseSolutionCache) {
+            if (result) |tww| {
+                try self.solution_cache.put(digest, SolSummary{ .slack = slack, .tww = tww });
+            } else |_| {}
+        }
+
         return result;
     }
 
-    fn initial_kernelization(self: *Self, comptime Graph: type, graph: *Graph, slack: Node) !void {
+    pub fn initial_kernelization(self: *Self, comptime Graph: type, graph: *Graph, slack: Node) !void {
         _ = slack;
         if (!FeatureLeafNodePruning) {
             return;
@@ -352,7 +400,7 @@ pub const ExactBranchAndBound = struct {
                 if (red.is_equal(graph.constRedNeighbors(u)) or
                     red.is_equal(graph.constRedNeighbors(v)))
                 {
-                    std.debug.print("Initial prune twin\n", .{});
+                    std.debug.print("Initial prune twin {d} -> {d}\n", .{ u, v });
                     graph.mergeNodes(u, v, &red);
                     self.working_seq.appendAssumeCapacity(Contraction{ .rem = u, .sur = v });
                     return true;
@@ -415,6 +463,7 @@ fn Frame(comptime Graph: type) type {
 
         input_graph: *const Graph,
         mergables: Graph.BitSet,
+        has_critical_neighbor: Graph.BitSet,
 
         work_graph: Graph,
         work_tww: Node,
@@ -425,7 +474,15 @@ fn Frame(comptime Graph: type) type {
         fn new(solver: *ExactBranchAndBound, graph: *const Graph, slack: Node) !Self {
             var n = @max(4, @as(usize, graph.has_neighbors.cardinality()));
 
-            var candidates = try std.ArrayList(ContraScore).initCapacity(solver.allocator, (n + 1) * n / 2);
+            var cand_size: usize = (n + 1) * n / 2;
+            if (!FeaturePessimiticCandidateAllocation) {
+                var n_prev = solver.candidate_lists.items.len;
+                if (solver.candidate_lists.items.len > 0) {
+                    cand_size = @min(cand_size, 2 * solver.candidate_lists.items[n_prev - 1].candidates.len);
+                }
+            }
+
+            var candidates = try std.ArrayList(ContraScore).initCapacity(solver.allocator, cand_size);
             errdefer candidates.deinit();
 
             var work_graph = try Graph.new(solver.allocator);
@@ -436,6 +493,7 @@ fn Frame(comptime Graph: type) type {
 
                 .input_graph = graph,
                 .mergables = undefined,
+                .has_critical_neighbor = undefined,
 
                 .candidates = candidates,
 
@@ -526,7 +584,12 @@ fn Frame(comptime Graph: type) type {
 
                 const tww_from_rec = self.context.solve(Graph, &self.work_graph, self.work_tww) catch |e| {
                     if (e == SolverError.Infeasable) {
-                        continue;
+                        if (self.context.lower >= self.context.upper_excl) {
+                            // we may have found a better LB in the mean time
+                            return SolverError.Infeasable;
+                        } else {
+                            continue;
+                        }
                     } else {
                         return e;
                     }
@@ -539,6 +602,8 @@ fn Frame(comptime Graph: type) type {
                     break;
                 }
             }
+
+            if (result == SolverError.Infeasable) {}
 
             return result;
         }
@@ -574,6 +639,10 @@ fn Frame(comptime Graph: type) type {
                     continue;
                 }
 
+                if (try self.pruneOuterPath()) {
+                    continue;
+                }
+
                 self.tinyGraphBelowSlack();
 
                 break;
@@ -599,6 +668,27 @@ fn Frame(comptime Graph: type) type {
             }
         }
 
+        fn computeCriticalNeighbors(self: *Self) void {
+            if (!FeatureCriticalCandidates) {
+                return;
+            }
+
+            self.has_critical_neighbor = Graph.BitSet.new();
+
+            if (self.slack + 1 < self.context.upper_excl) {
+                return;
+            }
+
+            var u: u32 = 0;
+            while (u < Graph.NumNodes) : (u += 1) {
+                if (self.input_graph.redDeg(u) != self.slack) {
+                    continue;
+                }
+
+                self.has_critical_neighbor.assignOr(&self.input_graph.blackNeighborsCopied(u));
+            }
+        }
+
         fn computeCandidates(self: *Self) void {
             var has_neighbors: *const Graph.BitSet = undefined;
             if (FeatureSkipPathNodes) {
@@ -608,6 +698,8 @@ fn Frame(comptime Graph: type) type {
             } else {
                 has_neighbors = &self.input_graph.has_neighbors;
             }
+
+            self.computeCriticalNeighbors();
 
             const depth = self.context.candidate_lists.items.len;
             if (!FeatureReuseCandidates or self.lower_bound_mode or depth == 0) {
@@ -659,7 +751,7 @@ fn Frame(comptime Graph: type) type {
 
             std.sort.sort(ContraScore, self.candidates.items, {}, cmpByValue);
 
-            if (self.lower_bound_mode) {
+            if (false and self.lower_bound_mode) {
                 var rand = self.context.rng.?.random();
                 var i: usize = 1;
 
@@ -682,7 +774,8 @@ fn Frame(comptime Graph: type) type {
             var iter = self.input_graph.has_neighbors.iter_set();
             while (iter.next()) |u| {
                 if (self.input_graph.deg(u) != 2 or !self.input_graph.constRedNeighbors(u).areAllUnset()) {
-                    self.mergables.assignOr(self.input_graph.constTwoNeighbors(u));
+                    self.mergables.assignOr(self.input_graph.constNeighbors(u));
+                    _ = self.mergables.setBit(u);
                 }
             }
 
@@ -699,8 +792,14 @@ fn Frame(comptime Graph: type) type {
             var red_degree = Graph.NumNodes;
 
             if (distAtmostTwo) {
+                //if (FeatureCriticalCandidates and (self.has_critical_neighbor.isSet(u) != self.has_critical_neighbor.isSet(v))) {
+                //    return;
+                //}
                 red_degree = self.input_graph.redDegreeInNeighborhoodAfterMerge(u, v);
             } else {
+                if (FeatureCriticalCandidates and (self.has_critical_neighbor.isSet(u) or self.has_critical_neighbor.isSet(v))) {
+                    return;
+                }
                 red_degree = self.input_graph.deg(u) + self.input_graph.deg(v);
             }
 
@@ -708,14 +807,21 @@ fn Frame(comptime Graph: type) type {
                 return;
             }
 
-            self.candidates.appendAssumeCapacity(ContraScore{
+            var score =
+                ContraScore{
                 .score = red_degree, //
                 .redDeg = red_degree,
                 .rem = v,
                 .sur = u,
                 .distTwo = distAtmostTwo,
                 .processed = false,
-            });
+            };
+
+            if (FeaturePessimiticCandidateAllocation) {
+                self.candidates.appendAssumeCapacity(score);
+            } else {
+                self.candidates.append(score) catch @panic("OOM");
+            }
         }
 
         fn registerSolution(self: *Self) void {
@@ -725,6 +831,47 @@ fn Frame(comptime Graph: type) type {
             self.context.upper_excl = self.work_tww;
             self.context.best_seq.clearRetainingCapacity();
             self.context.best_seq.appendSliceAssumeCapacity(self.context.working_seq.items);
+        }
+
+        noinline fn pruneOuterPath(self: *Self) anyerror!bool {
+            if (!FeatureOuterPathPruning) {
+                return false;
+            }
+
+            var u: Node = 0;
+            while (u < Graph.NumNodes) : (u += 1) {
+                if (self.work_graph.deg(u) != 1) {
+                    continue;
+                }
+
+                var v: Node = undefined;
+                {
+                    var iter = self.work_graph.constNeighbors(u).iter_set();
+                    v = iter.next().?;
+                }
+
+                if (self.work_graph.deg(v) != 2) {
+                    continue;
+                }
+
+                var w: Node = undefined;
+                {
+                    var iter = self.work_graph.constNeighbors(v).iter_set();
+                    w = iter.next().?;
+                    if (w == u) {
+                        w = iter.next().?;
+                    }
+                }
+
+                if (!self.work_graph.constRedNeighbors(v).isSet(w) and self.work_graph.deg(w) != 2) {
+                    continue;
+                }
+
+                try self.contractNodes(u, v, false);
+                return true;
+            }
+
+            return false;
         }
 
         noinline fn pruneLeafsAt(self: *Self, u: Node) !bool {
@@ -865,23 +1012,30 @@ pub fn findLowerBound(comptime N: u32, graph: *const mg.MatrixGraph(N), allocato
     return lower_bound;
 }
 
-pub fn findLowerBoundSubgraph(comptime N: u32, graph: *const mg.MatrixGraph(N), allocator: std.mem.Allocator, budget_ms: u64, lower: Node, upper: Node) !Node {
+pub fn findLowerBoundSubgraph(comptime N: u32, input_graph: *const mg.MatrixGraph(N), allocator: std.mem.Allocator, budget_ms: u64, lower: Node, upper: Node) !Node {
     const Graph = mg.MatrixGraph(N);
     var lower_bound = lower;
 
+    var graph = try input_graph.copy();
+    defer graph.deinit();
+    {
+        var solver = try ExactBranchAndBound.new(allocator, graph.numberOfNodes());
+        defer solver.deinit();
+        try solver.initial_kernelization(Graph, &graph, lower);
+    }
+
     var n = graph.has_neighbors.cardinality();
-    if (n < @min(20, 4 * upper)) {
+    var max_size = @max(3 * upper, 18);
+    if (n < max_size) {
         // if the graph is too small, we solve it directly
         // if its way too large, no chance we can solve it within the budget
         return lower;
     }
-
     var start_time: std.time.Instant = try std.time.Instant.now();
     var rng = std.rand.DefaultPrng.init(0x1273_5412_327a_8431);
     var random = rng.random();
 
     var nodes = Graph.BitSet.new();
-    var max_size = @max(4 * upper, n / 100);
 
     while (true) {
         if ((try std.time.Instant.now()).since(start_time) > budget_ms * 1000_000) {
@@ -901,20 +1055,24 @@ pub fn findLowerBoundSubgraph(comptime N: u32, graph: *const mg.MatrixGraph(N), 
             }
         }
 
-        while (nodes.cardinality() * 3 < max_size * 2) {
-            var prev = nodes;
-            var iter = prev.iter_set();
+        while (nodes.cardinality() < max_size) {
+            var frontier = Graph.BitSet.new();
+            var iter = nodes.iter_set();
             while (iter.next()) |u| {
-                nodes.assignOr(graph.constNeighbors(u));
+                frontier.assignOr(graph.constNeighbors(u));
             }
+            frontier.assignSub(&nodes);
+
+            var nNodes = nodes.cardinality();
+            while (frontier.cardinality() + nNodes > max_size) {
+                var node = random.intRangeLessThan(u32, 0, graph.numberOfNodes());
+                _ = frontier.unsetBit(node);
+            }
+
+            nodes.assignOr(&frontier);
         }
 
-        while (nodes.cardinality() * 2 > max_size * 3) {
-            var node = random.intRangeLessThan(u32, 0, graph.numberOfNodes());
-            _ = nodes.unsetBit(node);
-        }
-
-        lower_bound = subgraphLB(N, allocator, graph, &nodes, budget_ms / 10, lower_bound, upper) catch continue;
+        lower_bound = subgraphLB(N, allocator, &graph, &nodes, budget_ms / 5, lower_bound, upper) catch continue;
     }
 
     return lower_bound;
@@ -997,8 +1155,8 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
     //var hpa = hpa_allocator.allocator();
 
     var lower = context.lower;
-    if (true) {
-        if (false) {
+    if (FeatureTryLBFirst) {
+        if (BudgetHeuCSLB > 0) {
             var inner_cs = context.allocator.alloc(Contraction, cs.list.len) catch return;
             defer context.allocator.free(inner_cs);
 
@@ -1006,25 +1164,30 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
                 i.* = Contraction{ .rem = o.erased, .sur = o.survivor };
             }
 
-            lower = findLowerBoundWithCS(@TypeOf(graph).NumNodes, &graph, inner_cs, context.allocator, 10_000, context.lower, context.upper) catch context.lower;
-        }
-        if (lower >= context.upper) {
-            context.result = SolverError.Infeasable;
-            return;
+            lower = findLowerBoundWithCS(@TypeOf(graph).NumNodes, &graph, inner_cs, context.allocator, BudgetHeuCSLB, context.lower, context.upper) catch context.lower;
+
+            if (lower >= context.upper) {
+                context.result = SolverError.Infeasable;
+                return;
+            }
         }
 
-        lower = findLowerBoundSubgraph(@TypeOf(graph).NumNodes, &graph, context.allocator, 10_000, context.lower, context.upper) catch context.lower;
-        std.debug.assert(lower >= context.lower);
-        if (lower >= context.upper) {
-            context.result = SolverError.Infeasable;
-            return;
+        if (BudgetSubgraphLB > 0) {
+            lower = findLowerBoundSubgraph(@TypeOf(graph).NumNodes, &graph, context.allocator, BudgetSubgraphLB, context.lower, context.upper) catch context.lower;
+            std.debug.assert(lower >= context.lower);
+            if (lower >= context.upper) {
+                context.result = SolverError.Infeasable;
+                return;
+            }
         }
 
-        lower = findLowerBound(@TypeOf(graph).NumNodes, &graph, context.allocator, 10_000, context.lower, context.upper) catch context.lower;
-        std.debug.assert(lower >= context.lower);
-        if (lower >= context.upper) {
-            context.result = SolverError.Infeasable;
-            return;
+        if (BudgetPruningLB > 0) {
+            lower = findLowerBound(@TypeOf(graph).NumNodes, &graph, context.allocator, BudgetPruningLB, context.lower, context.upper) catch context.lower;
+            std.debug.assert(lower >= context.lower);
+            if (lower >= context.upper) {
+                context.result = SolverError.Infeasable;
+                return;
+            }
         }
     }
 

@@ -3,14 +3,14 @@ const comptime_util = @import("../util/comptime_checks.zig");
 
 pub fn NewRedEdgeType(comptime T: type) type {
     return enum(T) {
-				// Converted own black edge to red edge due to last merge
+        // Converted own black edge to red edge due to last merge
         black_to_red_own,
-				// Converted erased black edge to red edge due to last merge
-				black_to_red_other,
-				// Deleted a black edge from the surviving node since the erased node had the black edge too
+        // Converted erased black edge to red edge due to last merge
+        black_to_red_other,
+        // Deleted a black edge from the surviving node since the erased node had the black edge too
         black_to_deleted,
-				// Deleted a red edge from the surviving node since the erased node had the red edge too
-				red_to_deleted,
+        // Deleted a red edge from the surviving node since the erased node had the red edge too
+        red_to_deleted,
     };
 }
 
@@ -24,37 +24,37 @@ pub fn NewRedEdge(comptime T: type) type {
     // what edge turned (black -> red)
     // override (black -> deleted)
     return struct {
-				const Self = @This();
+        const Self = @This();
         target: T,
         edge_type: NewRedEdgeType(T),
-				
-				pub inline fn blackToRedOwn(target: T) Self {
-					return Self {
-						.target = target,
-						.edge_type = .black_to_red_own,
-					};
-				}
 
-				pub inline fn blackToRedOther(target: T) Self {
-					return Self {
-						.target = target,
-						.edge_type = .black_to_red_other,
-					};
-				}
+        pub inline fn blackToRedOwn(target: T) Self {
+            return Self{
+                .target = target,
+                .edge_type = .black_to_red_own,
+            };
+        }
 
-				pub inline fn blackToDeleted(target: T) Self {
-					return Self {
-						.target = target,
-						.edge_type = .black_to_deleted,
-					};
-				}
+        pub inline fn blackToRedOther(target: T) Self {
+            return Self{
+                .target = target,
+                .edge_type = .black_to_red_other,
+            };
+        }
 
-				pub inline fn redToDeleted(target: T) Self {
-					return Self {
-						.target = target,
-						.edge_type = .red_to_deleted,
-					};
-				}
+        pub inline fn blackToDeleted(target: T) Self {
+            return Self{
+                .target = target,
+                .edge_type = .black_to_deleted,
+            };
+        }
+
+        pub inline fn redToDeleted(target: T) Self {
+            return Self{
+                .target = target,
+                .edge_type = .red_to_deleted,
+            };
+        }
     };
 }
 
@@ -70,14 +70,14 @@ pub fn RedEdgeStack(comptime T: type) type {
             var size = std.ArrayListUnmanaged(u32){};
             try size.append(allocator, 0);
 
-            return Self { .edge_stack = std.ArrayListUnmanaged(NewRedEdge(T)){}, .size = size};
+            return Self{ .edge_stack = std.ArrayListUnmanaged(NewRedEdge(T)){}, .size = size };
         }
 
         pub fn initCapacity(allocator: std.mem.Allocator, capacity: u32) !Self {
             var size = std.ArrayListUnmanaged(u32){};
             try size.append(allocator, 0);
 
-            return Self { .edge_stack = try std.ArrayListUnmanaged(NewRedEdge(T)).initCapacity(allocator, capacity), .size = size };
+            return Self{ .edge_stack = try std.ArrayListUnmanaged(NewRedEdge(T)).initCapacity(allocator, capacity), .size = size };
         }
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
@@ -125,7 +125,7 @@ pub fn RedEdgeStack(comptime T: type) type {
         }
 
         pub inline fn sealLevel(self: *Self, allocator: std.mem.Allocator) !void {
-            try self.size.append(allocator, @intCast(u32,self.edge_stack.items.len));
+            try self.size.append(allocator, @intCast(u32, self.edge_stack.items.len));
         }
     };
 }
@@ -152,11 +152,11 @@ test "RedEdgeStack: Red edge stack add and iterate" {
     var stack = try RedEdgeStack(u16).init(gpa.allocator());
     defer stack.deinit(gpa.allocator());
 
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToRedOwn(1)) catch unreachable;
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(2)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToRedOwn(1)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToDeleted(2)) catch unreachable;
     try stack.sealLevel(gpa.allocator());
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToRedOwn(3)) catch unreachable;
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(4)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToRedOwn(3)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToDeleted(4)) catch unreachable;
     try stack.sealLevel(gpa.allocator());
 
     var iter = stack.iterateLastLevel() catch unreachable;
@@ -194,7 +194,7 @@ test "RedEdgeStack: Red edge stack add and empty stack" {
     }
     var stack = try RedEdgeStack(u16).init(gpa.allocator());
     defer stack.deinit(gpa.allocator());
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(1)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToDeleted(1)) catch unreachable;
 
     try stack.sealLevel(gpa.allocator());
     try stack.sealLevel(gpa.allocator());
@@ -217,10 +217,10 @@ test "RedEdgeStack: Red edge stack revert and add again" {
     }
     var stack = try RedEdgeStack(u16).init(gpa.allocator());
     defer stack.deinit(gpa.allocator());
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(1)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToDeleted(1)) catch unreachable;
 
     try stack.sealLevel(gpa.allocator());
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToDeleted(2)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToDeleted(2)) catch unreachable;
     try stack.sealLevel(gpa.allocator());
 
     {
@@ -232,7 +232,7 @@ test "RedEdgeStack: Red edge stack revert and add again" {
     }
 
     try stack.revertLastContraction();
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToRedOwn(3)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToRedOwn(3)) catch unreachable;
     try stack.sealLevel(gpa.allocator());
 
     {
@@ -264,7 +264,7 @@ test "RedEdgeStack: Red edge stack check safety guards" {
     }
     var stack = try RedEdgeStack(u16).init(gpa.allocator());
     defer stack.deinit(gpa.allocator());
-    stack.addEdge(gpa.allocator(),NewRedEdge(u16).blackToRedOwn(1)) catch unreachable;
+    stack.addEdge(gpa.allocator(), NewRedEdge(u16).blackToRedOwn(1)) catch unreachable;
     try std.testing.expectError(error.StackNotSealed, stack.iterateLastLevel());
 }
 

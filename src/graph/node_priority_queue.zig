@@ -22,10 +22,10 @@ pub fn NodePriorityQueue(comptime T: type) type {
         };
 
         pub inline fn init(graph: *Graph(T), max_postponed: T) !Self {
-            var node_prio_queue = Self{ .priority_queue = std.PriorityQueue(NodePriority, void, NodePriority.compareFn).init(graph.allocator, {}), .graph = graph, .monotonic_tic_counter = 0, .postponed_queue = std.PriorityQueue(PostponedNode, void, PostponedNode.postponedQueueOrder).init(graph.allocator, {}), .max_postponed = max_postponed, .postpone_set = try bitset.FastBitSet.initEmpty(graph.number_of_nodes,graph.allocator) };
-						try node_prio_queue.priority_queue.ensureTotalCapacity(graph.number_of_nodes);
-						try node_prio_queue.postponed_queue.ensureTotalCapacity(max_postponed+1);
-						return node_prio_queue;
+            var node_prio_queue = Self{ .priority_queue = std.PriorityQueue(NodePriority, void, NodePriority.compareFn).init(graph.allocator, {}), .graph = graph, .monotonic_tic_counter = 0, .postponed_queue = std.PriorityQueue(PostponedNode, void, PostponedNode.postponedQueueOrder).init(graph.allocator, {}), .max_postponed = max_postponed, .postpone_set = try bitset.FastBitSet.initEmpty(graph.number_of_nodes, graph.allocator) };
+            try node_prio_queue.priority_queue.ensureTotalCapacity(graph.number_of_nodes);
+            try node_prio_queue.postponed_queue.ensureTotalCapacity(max_postponed + 1);
+            return node_prio_queue;
         }
 
         pub inline fn deinit(self: *Self) void {
@@ -34,17 +34,16 @@ pub fn NodePriorityQueue(comptime T: type) type {
             self.postpone_set.deinit(self.graph.allocator);
         }
 
-				pub inline fn checkSmallest(self: *Self, node: T) bool {
-					if(self.priority_queue.peek()) |item| {
+        pub inline fn checkSmallest(self: *Self, node: T) bool {
+            if (self.priority_queue.peek()) |item| {
+                const prio_new = NodePriority{ .red_degree = self.graph.node_list[node].red_edges.cardinality(), .black_degree = self.graph.node_list[node].black_edges.cardinality(), .id = node };
 
-            const prio_new = NodePriority{ .red_degree = self.graph.node_list[node].red_edges.cardinality(), .black_degree = self.graph.node_list[node].black_edges.cardinality(), .id = node };
-
-						if(NodePriority.compareFn({},prio_new,item) == std.math.Order.lt) {
-							return true;
-						}
-					}
-					return false;
-				}
+                if (NodePriority.compareFn({}, prio_new, item) == std.math.Order.lt) {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         pub inline fn add(self: *Self, node: T) !void {
             if (self.graph.erased_nodes.get(node)) {
@@ -59,9 +58,9 @@ pub fn NodePriorityQueue(comptime T: type) type {
 
         pub inline fn shouldPostpone(self: *Self, current_tww: T, induced_tww: T) bool {
             _ = self;
-						// Adaptive scheduling might improve this further
+            // Adaptive scheduling might improve this further
             return induced_tww > current_tww and (induced_tww * 5) > (current_tww * 6);
-						//return induced_tww > current_tww;
+            //return induced_tww > current_tww;
         }
 
         pub inline fn postpone(self: *Self, node: T, by: T) !bool {
@@ -107,13 +106,13 @@ pub fn NodePriorityQueue(comptime T: type) type {
             }
         }
 
-				pub inline fn clear(self: *Self) void {
-					self.postponed_queue.len = 0;
-					self.priority_queue.len = 0;
+        pub inline fn clear(self: *Self) void {
+            self.postponed_queue.len = 0;
+            self.priority_queue.len = 0;
 
-					self.postpone_set.unsetAll();
-					self.monotonic_tic_counter = 0;
-				}
+            self.postpone_set.unsetAll();
+            self.monotonic_tic_counter = 0;
+        }
 
         pub inline fn removeNext(self: *Self, current_tww: T) !T {
             try self.reconcilePostponed(current_tww);
@@ -141,10 +140,10 @@ pub fn NodePriorityQueue(comptime T: type) type {
             id: T,
             pub fn compareFn(ctx: void, lhs: NodePriority, rhs: NodePriority) std.math.Order {
                 _ = ctx;
-								//Sort leafes to the end
-								if(lhs.red_degree+lhs.black_degree == 1 or rhs.red_degree+rhs.red_degree == 1) {
-									return std.math.order(rhs.black_degree+rhs.red_degree,lhs.red_degree+lhs.black_degree);
-								}
+                //Sort leafes to the end
+                if (lhs.red_degree + lhs.black_degree == 1 or rhs.red_degree + rhs.red_degree == 1) {
+                    return std.math.order(rhs.black_degree + rhs.red_degree, lhs.red_degree + lhs.black_degree);
+                }
                 if (lhs.red_degree == rhs.red_degree) {
                     return std.math.order(lhs.black_degree, rhs.black_degree);
                 }

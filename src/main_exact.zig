@@ -73,7 +73,15 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
     };
     defer loaded_graph.deinit();
 
-    try loaded_graph.findAllConnectedComponents();
+    var ccs = try loaded_graph.findAllConnectedComponents();
+    defer {
+        for (ccs) |cc| {
+            if (cc.len > 0) {
+                allocator.free(cc);
+            }
+        }
+        allocator.free(ccs);
+    }
     const tww = loaded_graph.solveExact() catch |err| {
         std.debug.print("Error {}\n", .{err});
         return err;

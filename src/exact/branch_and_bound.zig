@@ -44,7 +44,7 @@ const FeatureUseInfeasibleCache: bool = true;
 const FeatureUseSolutionCache: bool = false;
 const FeatureUseWFHash: bool = false;
 
-const FeatureReportProgress: u32 = 1 * 100000; // set to 0 to disable
+const FeatureReportProgress: u32 = 1 * 1000_000; // set to 0 to disable
 
 const FeatureInitialPruning: bool = true;
 const FeatureLeafNodePruning: bool = true;
@@ -368,6 +368,8 @@ pub const ExactBranchAndBound = struct {
             return;
         }
 
+        std.debug.print("Before Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
+
         while (true) {
             _ = try self.pruneLeafs(Graph, graph);
             if (try self.pruneTwins(Graph, graph)) {
@@ -376,6 +378,8 @@ pub const ExactBranchAndBound = struct {
 
             break;
         }
+
+        std.debug.print("After Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
     }
 
     noinline fn pruneTwins(
@@ -392,17 +396,17 @@ pub const ExactBranchAndBound = struct {
             var v_iter = graph.constTwoNeighbors(u).iter_set();
 
             while (v_iter.next()) |v| {
-                if (v <= u) {
-                    continue;
+                if (v >= u) {
+                    break;
                 }
 
                 var red = graph.redNeighborsAfterMerge(u, v);
                 if (red.is_equal(graph.constRedNeighbors(u)) or
                     red.is_equal(graph.constRedNeighbors(v)))
                 {
-                    std.debug.print("Initial prune twin {d} -> {d}\n", .{ u, v });
-                    graph.mergeNodes(u, v, &red);
-                    self.working_seq.appendAssumeCapacity(Contraction{ .rem = u, .sur = v });
+                    //std.debug.print("Initial prune twin {d} -> {d}\n", .{ u, v });
+                    graph.mergeNodes(v, u, &red);
+                    self.working_seq.appendAssumeCapacity(Contraction{ .rem = v, .sur = u });
                     return true;
                 }
             }
@@ -443,7 +447,7 @@ pub const ExactBranchAndBound = struct {
             var leafs_iter = leafs_at_node.iter_set();
             const survivor = leafs_iter.next().?;
             while (leafs_iter.next()) |rem| {
-                std.debug.print("Initial leaf {d} -> {d}\n", .{ rem, survivor });
+                //std.debug.print("Initial leaf {d} -> {d}\n", .{ rem, survivor });
                 try self.working_seq.append(Contraction{ .rem = rem, .sur = survivor });
                 graph.mergeNodes(rem, survivor, null); // TODO: this can be made faster by removing the Edge
                 change = true;
@@ -742,31 +746,16 @@ fn Frame(comptime Graph: type) type {
 
                     var inner_iter = has_neighbors.iter_set();
                     while (inner_iter.next()) |v| {
-                        if (u < v) {
-                            self.appendCandidatePair(u, v);
+                        if (v >= u) {
+                            break;
                         }
+
+                        self.appendCandidatePair(u, v);
                     }
                 }
             }
 
             std.sort.sort(ContraScore, self.candidates.items, {}, cmpByValue);
-
-            if (false and self.lower_bound_mode) {
-                var rand = self.context.rng.?.random();
-                var i: usize = 1;
-
-                rand.shuffle(ContraScore, self.candidates.items[0..@min(self.candidates.items.len, 10)]);
-
-                while (i < @min(3, self.candidates.items.len)) : (i += 1) {
-                    if (rand.int(u8) > 16) {
-                        break;
-                    }
-                }
-
-                if (i < self.candidates.items.len) {
-                    self.candidates.shrinkRetainingCapacity(i);
-                }
-            }
         }
 
         fn computeMergeables(self: *Self) void {
@@ -807,9 +796,15 @@ fn Frame(comptime Graph: type) type {
                 return;
             }
 
-            var score =
+            var score = red_degree;
+            var red_before = @min(red_degree, @max(self.input_graph.redDeg(u), self.input_graph.redDeg(v)));
+
+            score -= red_before / 2;
+            score += @boolToInt(distAtmostTwo);
+
+            var candidate =
                 ContraScore{
-                .score = red_degree, //
+                .score = score, //
                 .redDeg = red_degree,
                 .rem = v,
                 .sur = u,
@@ -818,9 +813,9 @@ fn Frame(comptime Graph: type) type {
             };
 
             if (FeaturePessimiticCandidateAllocation) {
-                self.candidates.appendAssumeCapacity(score);
+                self.candidates.appendAssumeCapacity(candidate);
             } else {
-                self.candidates.append(score) catch @panic("OOM");
+                self.candidates.append(candidate) catch @panic("OOM");
             }
         }
 
@@ -938,10 +933,7 @@ fn Frame(comptime Graph: type) type {
         }
 
         fn cmpByValue(_: void, a: ContraScore, b: ContraScore) bool {
-            const a_score = (a.score << @boolToInt(!a.distTwo));
-            const b_score = (b.score << @boolToInt(!b.distTwo));
-
-            return (a_score < b_score) or (a_score == b_score and (a.rem < b.rem or (a.rem == b.rem and a.sur < b.sur)));
+            return (a.score < b.score) or (a.score == b.score and (a.rem < b.rem or (a.rem == b.rem and a.sur < b.sur)));
         }
     };
 }
@@ -1025,7 +1017,7 @@ pub fn findLowerBoundSubgraph(comptime N: u32, input_graph: *const mg.MatrixGrap
     }
 
     var n = graph.has_neighbors.cardinality();
-    var max_size = @max(3 * upper, 18);
+    var max_size = @max(5 * upper, 18);
     if (n < max_size) {
         // if the graph is too small, we solve it directly
         // if its way too large, no chance we can solve it within the budget
@@ -1118,7 +1110,7 @@ fn subgraphLB(comptime N: u32, allocator: std.mem.Allocator, graph: *const mg.Ma
         }
     }
 
-    std.debug.print("Attempt LB with subgraph n={d} m={d} lower={d} upper={d}\n", .{ nodes.cardinality(), local_graph.numberOfEdges(), lower, upper });
+    //    std.debug.print("Attempt LB with subgraph n={d} m={d} lower={d} upper={d}\n", .{ nodes.cardinality(), local_graph.numberOfEdges(), lower, upper });
 
     var solver = ExactBranchAndBound.new(allocator, local_graph.numberOfNodes()) catch {
         return lower;
@@ -1131,13 +1123,15 @@ fn subgraphLB(comptime N: u32, allocator: std.mem.Allocator, graph: *const mg.Ma
 
     var tww = solver.solve(Graph, &local_graph, 0) catch |e| blk: {
         if (e == SolverError.Infeasable) {
-            std.debug.print(" Found optimal LB via CS!\n", .{});
+            std.debug.print(" Found optimal LB via sugraph!\n", .{});
             return upper;
         }
         break :blk lower;
     };
 
-    std.debug.print(" Found LB via subgraph with n={d}: {d}!\n", .{ nodes.cardinality(), tww });
+    if (tww > lower) {
+        std.debug.print(" Found LB via subgraph with n={d}: {d}!\n", .{ nodes.cardinality(), tww });
+    }
 
     return @max(lower, tww);
 }

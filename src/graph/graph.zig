@@ -664,9 +664,8 @@ pub fn Graph(comptime T: type) type {
             return tww;
         }
 
-        pub fn solveGreedy(self: *Self) !T {
-            const K = 20;
-            const P = 100;
+        pub fn solveExact(self: *Self) !T {
+            const ForceBnBSolution = false;
 
             var org_graph = try std.ArrayList(exact_bs.MatrixGraphFromInducedSubGraph).initCapacity(self.allocator, self.connected_components.items.len);
             defer org_graph.deinit();
@@ -676,28 +675,51 @@ pub fn Graph(comptime T: type) type {
                 try org_graph.append(try exact_bs.matrixGraphUnionFromInducedSubGraph(T, &cc.subgraph, self.allocator));
             }
 
-            var upper_bound: u32 = @intCast(u32, try self.solveGreedy());
-            if (upper_bound == 0) {
-                return 0;
-            }
+            var heu_tww = @intCast(u32, try self.solveGreedy());
 
-            var cc_iter = self.connected_components_min_heap.iterator();
-
-            // TODO: Be more clever about the order in which we process the CCs
-
-            var tww: T = 0;
-            while (cc_iter.next()) |cc| {
-                // Only for small exact graphs
-                if (T == u8 and self.connected_components.items[cc.index].subgraph.nodes.len < 128) {
-                    tww = std.math.max(try self.connected_components.items[cc.index].solveGreedy(K, P, &solver), tww);
-                } else {
-                    tww = std.math.max(try self.connected_components.items[cc.index].solveGreedyTopK(K, P, &solver), tww);
-                    //tww = std.math.max(try self.connected_components.items[cc.index].solveSweepingTopK(K,P,&solver),tww);
+            var lower: T = 0;
+            while (true) {
+                var upper_bound: u32 = 0;
+                for (self.connected_components.items) |cc| {
+                    std.debug.assert(cc.tww <= heu_tww);
+                    upper_bound = @max(upper_bound, cc.tww);
                 }
+
+                if (upper_bound <= lower) {
+                    return lower;
+                }
+
+                var cc_iter = self.connected_components_min_heap.iterator();
+                while (cc_iter.next()) |cc| {
+                    var component = &self.connected_components.items[cc.index];
+                    if (component.tww < upper_bound) {
+                        std.debug.print("Skip CC for the moment n={d} tww={d} | lower={d} uppder={d}", .{ component.subgraph.nodes.len, component.tww, lower, upper_bound });
+                        continue;
+                    }
+                    var subgraph = &org_graph.items[cc.index];
+
+                    // the exact solver treats the upper as exclusive; i.e. by setting it to the heuristic tww,
+                    // we force the solver to produce a better solution or fail.
+                    std.debug.print("Invoke exact solver with |CC|={d} lower={d} upper={d}\n", .{ component.subgraph.nodes.len, lower, upper_bound });
+                    var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, subgraph, lower, upper_bound + @boolToInt(ForceBnBSolution)) catch |e| {
+                        if (e == solver_bnb.SolverError.Infeasable) {
+                            std.debug.print(" ... infeasable\n", .{});
+                            std.debug.assert(!ForceBnBSolution);
+                            lower = @intCast(T, upper_bound);
+                            break;
+                        }
+                        std.debug.print(" ... failed\n", .{});
+                        return e;
+                    };
+                    std.debug.print(" ... solve with tww={d}\n", .{improved_result});
+
+                    lower = @max(lower, @intCast(T, improved_result));
+                }
+            }
 
             try self.combineContractionSequences();
 
-            return tww;
+            return lower;
         }
 
         pub fn combineContractionSequences(self: *Self) !void {
@@ -743,16 +765,21 @@ pub fn Graph(comptime T: type) type {
             var cc_iter = self.connected_components_min_heap.iterator();
             var tww: T = 0;
 
+            self.contraction.reset();
             while (cc_iter.next()) |cc| {
                 // Only for small exact graphs
-                if (T == u8 and self.connected_components.items[cc.index].subgraph.nodes.len < 128) {
-                    tww = std.math.max(try self.connected_components.items[cc.index].solveGreedy(K, P, &solver), tww);
-                } else {
-                    tww = std.math.max(try self.connected_components.items[cc.index].solveGreedyTopK(K, P, &solver), tww);
-                    //tww = std.math.max(try self.connected_components.items[cc.index].solveSweepingTopK(K,P,&solver),tww);
-                }
 
-                solver.reset();
+                var cc_inst = &self.connected_components.items[cc.index];
+
+                if (T == u8 and cc_inst.subgraph.nodes.len < 128) {
+                    var cc_tww = try cc_inst.solveGreedy(K, P, &solver);
+                    cc_inst.tww = cc_tww;
+                    tww = std.math.max(cc_tww, tww);
+                } else {
+                    var cc_tww = try cc_inst.solveGreedyTopK(K, P, &solver);
+                    cc_inst.tww = cc_tww;
+                    tww = std.math.max(cc_tww, tww);
+                }
             }
 
             try self.combineContractionSequences();
@@ -921,7 +948,9 @@ pub fn Graph(comptime T: type) type {
                 connected_component.deinit(self.allocator);
             }
             self.connected_components.deinit(self.allocator);
+            self.connected_components_min_heap.deinit();
             self.trivial_connected_component_contraction_sequence.deinit(self.allocator);
+
             self.contraction.deinit(self.allocator);
             self.allocator.free(self.connected_components_node_list_slice);
             self.scratch_bitset.deinit(self.allocator);

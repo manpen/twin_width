@@ -24,9 +24,6 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
 	};
 	defer loaded_graph.deinit();
 
-	_ = try loaded_graph.min_hash.getNextMove(&loaded_graph);
-	_ = try loaded_graph.min_hash.getNextMove(&loaded_graph);
-
 	try loaded_graph.findAllConnectedComponents();
 	const tww = loaded_graph.solveGreedy() catch |err| {
 		std.debug.print("Error {}\n",.{err});
@@ -162,8 +159,8 @@ pub fn main() !void {
 
 		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_114.gr","heuristic_114.gr");
 		//hpa_allocator.reset();
-		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_158.gr","heuristic_158.gr");
-		//hpa_allocator.reset();
+		_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_008.gr","heuristic_008.gr");
+		hpa_allocator.reset();
 
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);
 		while(try dirit.next()) |item| {

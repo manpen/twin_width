@@ -62,11 +62,10 @@ pub fn Graph(comptime T: type) type {
         // Main allocator is used to allocate everything that is needed at runtime.
         allocator: std.mem.Allocator,
 
-				started_at: std.time.Instant,
+        started_at: std.time.Instant,
 
-
-				last_merge_first_level_merge: bool,
-				last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
+        last_merge_first_level_merge: bool,
+        last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
@@ -111,29 +110,28 @@ pub fn Graph(comptime T: type) type {
             return 0;
         }
 
-				pub inline fn checkUpdateNewLeaf(self: *Self, new_leaf: T, comptime increase: bool) void {
-					if(self.node_list[new_leaf].isLeaf()) {
-						const parent = self.node_list[new_leaf].getFirstNeighboor();
-						if(increase) {
-							self.node_list[parent].num_leafes += 1;
-						}
-						else {
-							self.node_list[parent].num_leafes -= 1;
-						}
-					}
-				}
+        pub inline fn checkUpdateNewLeaf(self: *Self, new_leaf: T, comptime increase: bool) void {
+            if (self.node_list[new_leaf].isLeaf()) {
+                const parent = self.node_list[new_leaf].getFirstNeighboor();
+                if (increase) {
+                    self.node_list[parent].num_leafes += 1;
+                } else {
+                    self.node_list[parent].num_leafes -= 1;
+                }
+            }
+        }
 
         pub fn revertLastContraction(self: *Self, seq: *RetraceableContractionSequence(T)) !void {
             // WARNING: Is not usable yet since it will not restore num leafes at the moment this function will not restore exactly the same state as before!
             if (seq.lastContraction()) |last| {
                 self.scratch_bitset.unsetAll();
                 _ = self.erased_nodes.unset(last.erased);
-						
+
                 var black_iter = self.node_list[last.erased].black_edges.iterator();
-								if (self.node_list[last.survivor].isLeaf()) {
-									const parent = self.node_list[last.survivor].getFirstNeighboor();
-									self.node_list[parent].num_leafes -= 1;
-								}
+                if (self.node_list[last.survivor].isLeaf()) {
+                    const parent = self.node_list[last.survivor].getFirstNeighboor();
+                    self.node_list[parent].num_leafes -= 1;
+                }
 
                 // Add black edges
                 while (black_iter.next()) |black_edge| {
@@ -144,20 +142,18 @@ pub fn Graph(comptime T: type) type {
                 // Add black edges
                 while (red_iter.next()) |red_edge| {
                     self.scratch_bitset.set(red_edge);
-										// Reduce survivor num leafes
+                    // Reduce survivor num leafes
                     try self.node_list[red_edge].addRedEdge(self.allocator, last.erased);
-										// noop
+                    // noop
 
-										// noop
+                    // noop
                     try self.node_list[red_edge].removeRedEdge(self.allocator, last.survivor);
-										// increase erased num leafes
+                    // increase erased num leafes
                 }
-								self.checkUpdateNewLeaf(last.erased,true);
-
+                self.checkUpdateNewLeaf(last.erased, true);
 
                 // Remove all red edges which are set in the erased set
                 self.node_list[last.survivor].red_edges.removeMask(&self.scratch_bitset);
-
 
                 // Add back all red edges that were deleted by the merge and all black edges that were deleted by the merge
                 var iter_last = try seq.red_edge_stack.iterateLastLevel();
@@ -190,14 +186,13 @@ pub fn Graph(comptime T: type) type {
                         },
                     }
                 }
-								self.updateLeafCount(last.survivor);
+                self.updateLeafCount(last.survivor);
 
                 // Inform the red edge stack about the revert
                 try seq.removeLast();
+            } else {
+                @panic("No last contraction to revert!");
             }
-						else {
-							@panic("No last contraction to revert!");
-						}
         }
 
         pub const InducedTwinWidthPotential = struct {
@@ -218,34 +213,33 @@ pub fn Graph(comptime T: type) type {
                 self.delta_red_edges = std.math.maxInt(i32);
             }
 
-						pub fn compare(ctx: void, self: InducedTwinWidthPotential, other: InducedTwinWidthPotential) std.math.Order {
-						    _ = ctx;
-								if(self.tww == other.tww) {
-									return std.math.order(self.cumulative_red_edges, other.cumulative_red_edges);
-								}
-								return std.math.order(self.tww, other.tww);
-						}
+            pub fn compare(ctx: void, self: InducedTwinWidthPotential, other: InducedTwinWidthPotential) std.math.Order {
+                _ = ctx;
+                if (self.tww == other.tww) {
+                    return std.math.order(self.cumulative_red_edges, other.cumulative_red_edges);
+                }
+                return std.math.order(self.tww, other.tww);
+            }
 
-						pub inline fn order(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) std.math.Order {
-							if (self.tww >= current_twin_width or other.tww >= current_twin_width) {
-								if (self.tww < other.tww) {
-									return .lt;
-								}
-								else if(self.tww == other.tww) {
-									return std.math.order(self.cumulative_red_edges,other.cumulative_red_edges);
-								} else {
-									return .gt;
-								}
-							} else {
-								if (self.cumulative_red_edges < other.cumulative_red_edges) {
-									return .lt;
-								} else if (self.cumulative_red_edges == other.cumulative_red_edges) {
-									return std.math.order(other.delta_red_edges,self.delta_red_edges);
-								} else {
-									return .gt;
-								}
-							}
-						}
+            pub inline fn order(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) std.math.Order {
+                if (self.tww >= current_twin_width or other.tww >= current_twin_width) {
+                    if (self.tww < other.tww) {
+                        return .lt;
+                    } else if (self.tww == other.tww) {
+                        return std.math.order(self.cumulative_red_edges, other.cumulative_red_edges);
+                    } else {
+                        return .gt;
+                    }
+                } else {
+                    if (self.cumulative_red_edges < other.cumulative_red_edges) {
+                        return .lt;
+                    } else if (self.cumulative_red_edges == other.cumulative_red_edges) {
+                        return std.math.order(other.delta_red_edges, self.delta_red_edges);
+                    } else {
+                        return .gt;
+                    }
+                }
+            }
 
             pub inline fn isLessOrEqual(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) bool {
                 if (self.tww >= current_twin_width or other.tww >= current_twin_width) {
@@ -280,7 +274,7 @@ pub fn Graph(comptime T: type) type {
                 }
             }
 
-						pub inline fn isLessDeltaRedEdgesMajor(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) bool {
+            pub inline fn isLessDeltaRedEdgesMajor(self: InducedTwinWidthPotential, other: InducedTwinWidthPotential, current_twin_width: T) bool {
                 if (self.tww >= current_twin_width or other.tww >= current_twin_width) {
                     if (self.tww < other.tww or (self.tww == other.tww and self.delta_red_edges < other.delta_red_edges)) {
                         return true;
@@ -299,9 +293,9 @@ pub fn Graph(comptime T: type) type {
             }
         };
 
-				pub fn calculateMaxTwwOfNewNeighbors(self: *Self, erased: T, survivor: T) T {
+        pub fn calculateMaxTwwOfNewNeighbors(self: *Self, erased: T, survivor: T) T {
             var delta_red: T = 0;
-						var tww:T = 0;
+            var tww: T = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
 
             while (red_iter.next()) |item| {
@@ -309,7 +303,7 @@ pub fn Graph(comptime T: type) type {
 
                 if (!self.node_list[survivor].red_edges.contains(item)) {
                     delta_red += 1;
-										tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                 }
             }
 
@@ -325,21 +319,21 @@ pub fn Graph(comptime T: type) type {
                 if (black_iter.first) {
                     if (!self.node_list[survivor].red_edges.contains(item)) {
                         delta_red += 1;
-												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                        tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
                 // Came from survivor
                 else {
                     if (!self.node_list[erased].red_edges.contains(item)) {
                         delta_red += 1;
-												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                        tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
             }
-						return std.math.max(delta_red,tww);
-				}
+            return std.math.max(delta_red, tww);
+        }
 
-				pub fn calculateTwwOfMergeSurvivor(self: *Self, erased: T, survivor: T) T {
+        pub fn calculateTwwOfMergeSurvivor(self: *Self, erased: T, survivor: T) T {
             var delta_red: T = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
 
@@ -372,8 +366,8 @@ pub fn Graph(comptime T: type) type {
                     }
                 }
             }
-						return delta_red;
-				}
+            return delta_red;
+        }
 
         pub fn calculateInducedTwwPotential(self: *Self, erased: T, survivor: T, ub: *InducedTwinWidthPotential, current_tww: T) InducedTwinWidthPotential {
             // NOTICE: This function performs better than calculateInducedTww at the moment
@@ -454,7 +448,7 @@ pub fn Graph(comptime T: type) type {
             }
 
             pub inline fn isLess(self: InducedTwinWidth, other: InducedTwinWidth) bool {
-							return self.lessThan(other);
+                return self.lessThan(other);
             }
             pub inline fn lessThan(self: InducedTwinWidth, other: InducedTwinWidth) bool {
                 if (self.tww < other.tww or (self.tww == other.tww and self.delta_red_edges < other.delta_red_edges)) {
@@ -495,7 +489,7 @@ pub fn Graph(comptime T: type) type {
 
             const upper_bound_all = upper_bound orelse std.math.maxInt(T);
 
-						var tww: T = 0;
+            var tww: T = 0;
 
             var delta_red: T = 0;
             var correction_factor: T = 0;
@@ -507,7 +501,7 @@ pub fn Graph(comptime T: type) type {
                 while (red_iter.next()) |item| {
                     if (item != survivor and item != erased) {
                         delta_red += 1;
-												tww = std.math.max(self.node_list[item].red_edges.cardinality(), tww);
+                        tww = std.math.max(self.node_list[item].red_edges.cardinality(), tww);
                     } else {
                         correction_factor = 1;
                     }
@@ -536,11 +530,11 @@ pub fn Graph(comptime T: type) type {
                 }
                 // Came from survivor
                 else {
-									if (!self.node_list[erased].red_edges.contains(item)) {
-										delta_red += 1;
-										delta_red_edges += 1;
-										tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
-									}
+                    if (!self.node_list[erased].red_edges.contains(item)) {
+                        delta_red += 1;
+                        delta_red_edges += 1;
+                        tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
+                    }
                 }
 
                 if (tww > upper_bound_all or delta_red > upper_bound_all) {
@@ -553,11 +547,11 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub inline fn updateLeafCount(self: *Self, node: T) void {
-					if (self.node_list[node].isLeaf()) {
-						const parent = self.node_list[node].getFirstNeighboor();
-						self.node_list[parent].num_leafes += 1;
-						self.node_list[node].num_leafes = if (self.node_list[parent].isLeaf()) 1 else 0;
-					} else {
+            if (self.node_list[node].isLeaf()) {
+                const parent = self.node_list[node].getFirstNeighboor();
+                self.node_list[parent].num_leafes += 1;
+                self.node_list[node].num_leafes = if (self.node_list[parent].isLeaf()) 1 else 0;
+            } else {
                 var nb_iter = self.node_list[node].unorderedIterator();
                 var count: T = 0;
                 while (nb_iter.next()) |item| {
@@ -577,8 +571,8 @@ pub fn Graph(comptime T: type) type {
                 return GraphError.MisformedEdgeList;
             }
 
-						self.last_merge_first_level_merge = false;
-						self.last_merge_red_edges_erased.shrinkRetainingCapacity(0);
+            self.last_merge_first_level_merge = false;
+            self.last_merge_red_edges_erased.shrinkRetainingCapacity(0);
 
             self.erased_nodes.set(erased);
             if (self.node_list[survivor].isLeaf()) {
@@ -596,15 +590,14 @@ pub fn Graph(comptime T: type) type {
                 if (item != survivor) {
                     if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
-												self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
+                        self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
                     } else {
                         // Inform about the removal of the red edge
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).redToDeleted(item));
                     }
+                } else {
+                    self.last_merge_first_level_merge = true;
                 }
-								else {
-									self.last_merge_first_level_merge = true;
-								}
             }
 
             var tww: T = 0;
@@ -615,7 +608,7 @@ pub fn Graph(comptime T: type) type {
 
             while (black_iter.next()) |item| {
                 if (item == survivor or item == erased) {
-										self.last_merge_first_level_merge = true;
+                    self.last_merge_first_level_merge = true;
                     continue;
                 }
                 // Came from erased
@@ -625,7 +618,7 @@ pub fn Graph(comptime T: type) type {
 
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
 
-												self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
+                        self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
                     }
                 }
                 // Came from survivor
@@ -801,9 +794,9 @@ pub fn Graph(comptime T: type) type {
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
                 .connected_components_node_list_slice = try allocator.alloc(T, number_of_nodes),
-								.started_at = try std.time.Instant.now(),
-								.last_merge_first_level_merge = false,
-								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
+                .started_at = try std.time.Instant.now(),
+                .last_merge_first_level_merge = false,
+                .last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
             };
 
             return graph;
@@ -852,9 +845,9 @@ pub fn Graph(comptime T: type) type {
                 .connected_components_node_list_slice = try allocator.alloc(T, pace.number_of_nodes),
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
-								.started_at = try std.time.Instant.now(),
-								.last_merge_first_level_merge = false,
-								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
+                .started_at = try std.time.Instant.now(),
+                .last_merge_first_level_merge = false,
+                .last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
             };
         }
 
@@ -1144,9 +1137,9 @@ test "Test contraction retrace Tiny 3" {
         }
         i -= 1;
     }
-		
-		i = 9;
-		while (i > 0) {
+
+    i = 9;
+    while (i > 0) {
         var tww = try graph.addContraction(i - 1, 9, &ret);
         try std.testing.expectEqual(@as(u32, 0), tww);
         i -= 1;

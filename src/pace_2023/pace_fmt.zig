@@ -60,57 +60,47 @@ pub fn loadPaceProblemHeaderFromFile(filename: []const u8) !PaceProblem2023 {
             return PaceError.NotPACEFormat;
         };
 
-				const number_of_edges: u32 = std.fmt.parseInt(u32, splits.next() orelse return PaceError.NotPACEFormat, 10) catch {
-					return PaceError.NotPACEFormat;
-				};
+        const number_of_edges: u32 = std.fmt.parseInt(u32, splits.next() orelse return PaceError.NotPACEFormat, 10) catch {
+            return PaceError.NotPACEFormat;
+        };
 
-		    return PaceProblem2023 {
-					.nodes = number_of_nodes,
-					.edges = number_of_edges
-				};
+        return PaceProblem2023{ .nodes = number_of_nodes, .edges = number_of_edges };
     }
-		return PaceError.NotPACEFormat;
+    return PaceError.NotPACEFormat;
 }
 
 pub fn loadPaceProblemHeaderFromStdin() !PaceProblem2023 {
-	var file = std.io.getStdIn();
-	var line_splitter = file.reader();
+    var file = std.io.getStdIn();
+    var line_splitter = file.reader();
 
+    var local_buffer: [2048]u8 = undefined;
+    var problem_line = try line_splitter.readUntilDelimiterOrEof(local_buffer[0..], '\n') orelse return PaceError.NotPACEFormat;
 
-	var local_buffer : [2048]u8 = undefined;
-	var problem_line = try line_splitter.readUntilDelimiterOrEof(local_buffer[0..],'\n') orelse return PaceError.NotPACEFormat;
+    var splits = std.mem.split(u8, problem_line, " ");
 
-	var splits = std.mem.split(u8, problem_line, " ");
+    const p = splits.next() orelse return PaceError.NotPACEFormat;
+    const tww = splits.next() orelse return PaceError.NotPACEFormat;
 
-	const p = splits.next() orelse return PaceError.NotPACEFormat;
-	const tww = splits.next() orelse return PaceError.NotPACEFormat;
+    if (!std.mem.eql(u8, p, "p")) {
+        return PaceError.NotPACEFormat;
+    }
 
-	if (!std.mem.eql(u8, p, "p")) {
-		return PaceError.NotPACEFormat;
-	}
+    if (!std.mem.eql(u8, tww, "tww")) {
+        return PaceError.NotPACEFormat;
+    }
 
-	if (!std.mem.eql(u8, tww, "tww")) {
-		return PaceError.NotPACEFormat;
-	}
+    const number_of_nodes: u32 = std.fmt.parseInt(u32, splits.next() orelse return PaceError.NotPACEFormat, 10) catch {
+        return PaceError.NotPACEFormat;
+    };
 
-	const number_of_nodes: u32 = std.fmt.parseInt(u32, splits.next() orelse return PaceError.NotPACEFormat, 10) catch {
-		return PaceError.NotPACEFormat;
-	};
+    const number_of_edges: u32 = std.fmt.parseInt(u32, splits.next() orelse return PaceError.NotPACEFormat, 10) catch {
+        return PaceError.NotPACEFormat;
+    };
 
-	const number_of_edges: u32 = std.fmt.parseInt(u32, splits.next() orelse return PaceError.NotPACEFormat, 10) catch {
-		return PaceError.NotPACEFormat;
-	};
-
-	return PaceProblem2023 {
-		.nodes = number_of_nodes,
-		.edges = number_of_edges
-	};
+    return PaceProblem2023{ .nodes = number_of_nodes, .edges = number_of_edges };
 }
 
-pub const PaceProblem2023 = struct {
-	nodes: u32,
-	edges: u32
-};
+pub const PaceProblem2023 = struct { nodes: u32, edges: u32 };
 
 pub fn PaceNode(comptime T: type) type {
     comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -147,13 +137,11 @@ pub fn Pace2023Fmt(comptime T: type) type {
         }
 
         pub fn fromStdin(allocator: std.mem.Allocator, problem: PaceProblem2023) !Self {
-						var file = std.io.getStdIn();
-						var unbuffered_line_splitter = file.reader();
-						var buffered_reader = std.io.BufferedReader(32768,@TypeOf(unbuffered_line_splitter)) {
-							.unbuffered_reader = unbuffered_line_splitter
-						};
-						var line_splitter = buffered_reader.reader();
-						var local_buffer : [2048]u8 = undefined;
+            var file = std.io.getStdIn();
+            var unbuffered_line_splitter = file.reader();
+            var buffered_reader = std.io.BufferedReader(32768, @TypeOf(unbuffered_line_splitter)){ .unbuffered_reader = unbuffered_line_splitter };
+            var line_splitter = buffered_reader.reader();
+            var local_buffer: [2048]u8 = undefined;
 
             var nodes: []PaceNode(T) = try allocator.alloc(PaceNode(T), problem.nodes);
             errdefer allocator.free(nodes);
@@ -162,14 +150,14 @@ pub fn Pace2023Fmt(comptime T: type) type {
                 node.edges = edge_list.ParametrizedUnsortedArrayList(T).init();
             }
 
-						errdefer {
-							for(nodes) |*node| {
-								node.edges.deinit(allocator);
-							}
-						}
+            errdefer {
+                for (nodes) |*node| {
+                    node.edges.deinit(allocator);
+                }
+            }
 
-						var edge_count: u32 = 0;
-            while (try line_splitter.readUntilDelimiterOrEof(local_buffer[0..],'\n')) |line| {
+            var edge_count: u32 = 0;
+            while (try line_splitter.readUntilDelimiterOrEof(local_buffer[0..], '\n')) |line| {
                 if (line.len == 0 or line[0] == 'c') {
                     // Skip comments
                     continue;
@@ -185,13 +173,13 @@ pub fn Pace2023Fmt(comptime T: type) type {
                     return PaceError.NodeIdsTooLarge;
                 }
 
-								edge_count+=1;
+                edge_count += 1;
 
-                try nodes[node_id].edges.add(allocator, @intCast(T,second_node_id));
-                try nodes[second_node_id].edges.add(allocator, @intCast(T,node_id));
-								if(edge_count == problem.edges) {
-									break;
-								}
+                try nodes[node_id].edges.add(allocator, @intCast(T, second_node_id));
+                try nodes[second_node_id].edges.add(allocator, @intCast(T, node_id));
+                if (edge_count == problem.edges) {
+                    break;
+                }
             }
 
             return .{ .number_of_nodes = problem.nodes, .number_of_edges = problem.edges, .nodes = nodes };
@@ -230,13 +218,13 @@ pub fn Pace2023Fmt(comptime T: type) type {
                 node.edges = edge_list.ParametrizedUnsortedArrayList(T).init();
             }
 
-						errdefer {
-							for(nodes) |*node| {
-								node.edges.deinit(allocator);
-							}
-						}
+            errdefer {
+                for (nodes) |*node| {
+                    node.edges.deinit(allocator);
+                }
+            }
 
-						var edge_count: u32 = 0;
+            var edge_count: u32 = 0;
             while (line_splitter.next()) |line| {
                 if (line.len == 0 or line[0] == 'c') {
                     // Skip comments
@@ -253,17 +241,17 @@ pub fn Pace2023Fmt(comptime T: type) type {
                     return PaceError.NodeIdsTooLarge;
                 }
 
-								if(edge_count >= number_of_edges) {
-									return PaceError.TooManyEdges;
-								}
-								edge_count+=1;
+                if (edge_count >= number_of_edges) {
+                    return PaceError.TooManyEdges;
+                }
+                edge_count += 1;
 
-                try nodes[node_id].edges.add(allocator, @intCast(T,second_node_id));
-                try nodes[second_node_id].edges.add(allocator, @intCast(T,node_id));
+                try nodes[node_id].edges.add(allocator, @intCast(T, second_node_id));
+                try nodes[second_node_id].edges.add(allocator, @intCast(T, node_id));
             }
-						if(edge_count < number_of_edges) {
-							return PaceError.TooFewEdges;
-						}
+            if (edge_count < number_of_edges) {
+                return PaceError.TooFewEdges;
+            }
 
             return .{ .number_of_nodes = number_of_nodes, .number_of_edges = number_of_edges, .nodes = nodes };
         }

@@ -50,8 +50,12 @@ pub fn Graph(comptime T: type) type {
         // memory consumption being O(2*m) etc.
         failing_allocator: std.heap.FixedBufferAllocator,
 
-        // Stores all connected components
+        // Stores all connected components that are not trivial (< 2 vertices)
         connected_components: std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)),
+
+        // Stores a trivial merge sequence that merges all graphs of order < 2
+        trivial_connected_component_contraction_sequence: std.ArrayListUnmanaged(u32),
+
         // Contains all nodes but permuted so that each slice can will store the nodes in
         // a connected component consecutive in memory
         connected_components_node_list_slice: []T,
@@ -660,8 +664,9 @@ pub fn Graph(comptime T: type) type {
             return tww;
         }
 
-        pub fn solveExact(self: *Self) !T {
-            const ForceBnBSolution = false;
+        pub fn solveGreedy(self: *Self) !T {
+            const K = 20;
+            const P = 100;
 
             var org_graph = try std.ArrayList(exact_bs.MatrixGraphFromInducedSubGraph).initCapacity(self.allocator, self.connected_components.items.len);
             defer org_graph.deinit();
@@ -682,28 +687,13 @@ pub fn Graph(comptime T: type) type {
 
             var tww: T = 0;
             while (cc_iter.next()) |cc| {
-                std.debug.assert(tww < upper_bound); // if we should reached upper_bound, there's nothing to do, so we should have stopped earlier
-
-                var component = &self.connected_components.items[cc.index];
-                var subgraph = &org_graph.items[cc.index];
-
-                // the exact solver treats the upper as exclusive; i.e. by setting it to the heuristic tww,
-                // we force the solver to produce a better solution or fail.
-                std.debug.print("Invoke exact solver with |CC|={d} lower={d} upper={d}\n", .{ component.subgraph.nodes.len, tww, upper_bound });
-                var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, subgraph, tww, upper_bound + @boolToInt(ForceBnBSolution)) catch |e| {
-                    if (e == solver_bnb.SolverError.Infeasable) {
-                        std.debug.print(" ... infeasable\n", .{});
-                        std.debug.assert(!ForceBnBSolution);
-                        tww = @intCast(T, upper_bound);
-                        break;
-                    }
-                    std.debug.print(" ... failed\n", .{});
-                    return e;
-                };
-                std.debug.print(" ... solve with tww={d}\n", .{improved_result});
-
-                tww = @max(tww, @intCast(T, improved_result));
-            }
+                // Only for small exact graphs
+                if (T == u8 and self.connected_components.items[cc.index].subgraph.nodes.len < 128) {
+                    tww = std.math.max(try self.connected_components.items[cc.index].solveGreedy(K, P, &solver), tww);
+                } else {
+                    tww = std.math.max(try self.connected_components.items[cc.index].solveGreedyTopK(K, P, &solver), tww);
+                    //tww = std.math.max(try self.connected_components.items[cc.index].solveSweepingTopK(K,P,&solver),tww);
+                }
 
             try self.combineContractionSequences();
 
@@ -791,6 +781,7 @@ pub fn Graph(comptime T: type) type {
                 .scratch_bitset = try bitset.FastBitSet.initEmpty(number_of_nodes, allocator),
                 .erased_nodes = try bitset.FastBitSet.initEmpty(number_of_nodes, allocator),
                 .connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){},
+                .trivial_connected_component_contraction_sequence = std.ArrayListUnmanaged(u32){},
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
                 .connected_components_node_list_slice = try allocator.alloc(T, number_of_nodes),
@@ -842,6 +833,7 @@ pub fn Graph(comptime T: type) type {
                 .erased_nodes = try bitset.FastBitSet.initEmpty(pace.number_of_nodes, allocator),
                 .scratch_bitset = try bitset.FastBitSet.initEmpty(pace.number_of_nodes, allocator),
                 .connected_components = std.ArrayListUnmanaged(connected_components.ConnectedComponent(T)){},
+                .trivial_connected_component_contraction_sequence = std.ArrayListUnmanaged(u32){},
                 .connected_components_node_list_slice = try allocator.alloc(T, pace.number_of_nodes),
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
@@ -851,14 +843,14 @@ pub fn Graph(comptime T: type) type {
             };
         }
 
-        pub fn findAllConnectedComponents(self: *Self) !void {
+        pub fn findAllConnectedComponents(self: *Self) ![][]u32 {
             self.scratch_bitset.unsetAll();
 
             var bfs_stack = try bfs_mod.BfsQueue(T).init(self.allocator, self.number_of_nodes);
             defer bfs_stack.deinit(self.allocator);
 
             var unsetIter = self.scratch_bitset.iterUnset();
-            var components: u32 = 0;
+            var non_trivial_components: u32 = 0;
 
             var current_slice_start: u32 = 0;
             var current_slice_ptr: u32 = 0;
@@ -875,9 +867,38 @@ pub fn Graph(comptime T: type) type {
                     current_slice_ptr += 1;
                 }
 
-                components += 1;
-                try self.connected_components.append(self.allocator, try connected_components.ConnectedComponent(T).init(self.allocator, self.connected_components_node_list_slice[current_slice_start..current_slice_ptr], iterator.level, self));
+                var tmp = self.connected_components_node_list_slice[current_slice_start..current_slice_ptr];
+                if (tmp.len < 2) { // trivial component
+                    for (tmp) |node| {
+                        try self.trivial_connected_component_contraction_sequence.append(self.allocator, @as(u32, node));
+                    }
+                } else {
+                    non_trivial_components += 1;
+                    try self.connected_components.append(self.allocator, try connected_components.ConnectedComponent(T).init(self.allocator, tmp, iterator.level, self));
+                }
                 current_slice_start = current_slice_ptr;
+            }
+
+            // construct solution tracking
+            var cc_solutions = try self.allocator.alloc([]u32, non_trivial_components + 1);
+            for (0..non_trivial_components) |i| {
+                cc_solutions[i] = self.connected_components.items[i].contraction_slice;
+            }
+            const items = self.trivial_connected_component_contraction_sequence.items;
+            const last_index = non_trivial_components;
+            if (items.len == 0) {
+                cc_solutions[last_index] = &[_]u32{};
+            } else if (items.len == 1) {
+                cc_solutions[last_index] = try self.allocator.alloc(u32, 1);
+                cc_solutions[last_index][0] = self.trivial_connected_component_contraction_sequence.items[0];
+            } else {
+                cc_solutions[last_index] = try self.allocator.alloc(u32, (items.len - 1) * 2);
+                var j: usize = 0;
+                for (0..(items.len - 1)) |i| {
+                    cc_solutions[last_index][j] = items[i + 1];
+                    cc_solutions[last_index][j + 1] = items[i];
+                    j += 2;
+                }
             }
 
             try self.connected_components_min_heap.ensureTotalCapacity(self.connected_components.items.len);
@@ -888,6 +909,7 @@ pub fn Graph(comptime T: type) type {
             var tww = self.connected_components_min_heap.remove();
             //std.debug.print("Found {} components largest {} and tww {} density {}\n", .{ components, largest, tww.tww, self.density() });
             try self.connected_components_min_heap.add(tww);
+            return cc_solutions;
         }
 
         pub fn deinit(self: *Self) void {
@@ -899,7 +921,7 @@ pub fn Graph(comptime T: type) type {
                 connected_component.deinit(self.allocator);
             }
             self.connected_components.deinit(self.allocator);
-            self.connected_components_min_heap.deinit();
+            self.trivial_connected_component_contraction_sequence.deinit(self.allocator);
             self.contraction.deinit(self.allocator);
             self.allocator.free(self.connected_components_node_list_slice);
             self.scratch_bitset.deinit(self.allocator);

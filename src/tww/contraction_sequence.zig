@@ -104,6 +104,16 @@ pub fn ContractionSequence(comptime T: type) type {
             }
         }
 
+        pub inline fn write_to_slice(self: *Self, slice: []u32) void {
+            var iterate_seq = self.iterator();
+            var j: usize = 0;
+            while (iterate_seq.next()) |seq| {
+                slice[j] = @as(u32, seq.survivor);
+                slice[j + 1] = @as(u32, seq.erased);
+                j += 2;
+            }
+        }
+
         pub inline fn writeSolutionToStdout(self: *Self) !void {
             var file = std.io.getStdOut();
             var buffered = std.io.BufferedWriter(32768, @TypeOf(file.writer())){ .unbuffered_writer = file.writer() };

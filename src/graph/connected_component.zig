@@ -53,6 +53,8 @@ pub fn ConnectedComponent(comptime T: type) type {
         current_contraction_seq: retraceable_contraction.RetraceableContractionSequence(T),
         tww: T,
         bfs_levels: u32,
+        contraction_slice: []u32,
+        backup_contraction_slice: []u32,
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             self.best_contraction_sequence.deinit(allocator);
@@ -68,15 +70,26 @@ pub fn ConnectedComponent(comptime T: type) type {
             }
             const result = try self.subgraph.solveSweepingSolverTopK(K, P, &self.current_contraction_seq, solver, (267 - time_passed), probing);
             if (result < self.tww) {
-                try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                try self.update_best();
                 self.tww = result;
             }
             return result;
         }
 
+        fn update_best(self: *Self) !void {
+            self.current_contraction_seq.seq.write_to_slice(self.backup_contraction_slice);
+            // swap ensure that the global slice is updated by a simple redirection of a pointer.
+            // TECHNICALLY this is not atomic, as it consists of two assignments (length and pointer).
+            // If this is a problem, we should use a mutex. should add negligible overhead
+            var tmp = self.contraction_slice;
+            self.contraction_slice = self.backup_contraction_slice;
+            self.backup_contraction_slice = tmp;
+            try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+        }
+
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P)) !T {
             var result = try self.subgraph.solveGreedyTopK(K, P, &self.current_contraction_seq, solver, true);
-            try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+            try self.update_best();
             self.tww = result;
 
             if (self.tww < 200 or self.subgraph.nodes.len < 3700) {
@@ -112,10 +125,10 @@ pub fn ConnectedComponent(comptime T: type) type {
                 self.tww = result;
                 if (final_tww == null) {
                     final_tww = result;
-                    try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                    try self.update_best();
                 } else {
                     if (result < final_tww.?) {
-                        try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                        try self.update_best();
                     }
                     final_tww = std.math.min(result, final_tww.?);
                 }
@@ -135,10 +148,10 @@ pub fn ConnectedComponent(comptime T: type) type {
                 self.tww = result;
                 if (final_tww == null) {
                     final_tww = result;
-                    try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                    try self.update_best();
                 } else {
                     if (result < final_tww.?) {
-                        try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                        try self.update_best();
                     }
                     final_tww = std.math.min(result, final_tww.?);
                 }
@@ -153,10 +166,10 @@ pub fn ConnectedComponent(comptime T: type) type {
                 self.tww = result;
                 if (final_tww == null) {
                     final_tww = result;
-                    try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                    try self.update_best();
                 } else {
                     if (result < final_tww.?) {
-                        try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                        try self.update_best();
                     }
                     final_tww = std.math.min(result, final_tww.?);
                 }
@@ -176,10 +189,10 @@ pub fn ConnectedComponent(comptime T: type) type {
                 self.tww = result;
                 if (final_tww == null) {
                     final_tww = result;
-                    try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                    try self.update_best();
                 } else {
                     if (result < final_tww.?) {
-                        try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                        try self.update_best();
                     }
                     final_tww = std.math.min(result, final_tww.?);
                 }
@@ -195,10 +208,10 @@ pub fn ConnectedComponent(comptime T: type) type {
                 self.tww = result;
                 if (final_tww == null) {
                     final_tww = result;
-                    try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                    try self.update_best();
                 } else {
                     if (result < final_tww.?) {
-                        try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                        try self.update_best();
                     }
                     final_tww = std.math.min(result, final_tww.?);
                 }
@@ -211,10 +224,10 @@ pub fn ConnectedComponent(comptime T: type) type {
                 self.tww = result;
                 if (final_tww == null) {
                     final_tww = result;
-                    try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                    try self.update_best();
                 } else {
                     if (result < final_tww.?) {
-                        try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                        try self.update_best();
                     }
                     final_tww = std.math.min(result, final_tww.?);
                 }
@@ -226,11 +239,11 @@ pub fn ConnectedComponent(comptime T: type) type {
                 const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_weighted_scorer), &ctx_node, &ctx_weighted_scorer, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
                 self.tww = result;
                 if (final_tww == null) {
-                    try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                    try self.update_best();
                     final_tww = result;
                 } else {
                     if (result < final_tww.?) {
-                        try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                        try self.update_best();
                     }
                     final_tww = std.math.min(result, final_tww.?);
                 }
@@ -243,11 +256,11 @@ pub fn ConnectedComponent(comptime T: type) type {
                 const result = try self.subgraph.solveGreedyLookahead(@TypeOf(selector_simple), @TypeOf(ctx_weighted_scorer), &selector_simple, &ctx_weighted_scorer, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
                 self.tww = result;
                 if (final_tww == null) {
-                    try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                    try self.update_best();
                     final_tww = result;
                 } else {
                     if (result < final_tww.?) {
-                        try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
+                        try self.update_best();
                     }
                     final_tww = std.math.min(result, final_tww.?);
                 }
@@ -271,9 +284,44 @@ pub fn ConnectedComponent(comptime T: type) type {
                     previous = item;
                 }
             }
+
+            // initialize output solution slice
+            var num_entries = nodes.len;
+            if (num_entries > 2) {
+                // 1 =>
+                // 1
+                // 1 2 =>
+                // 1 2
+                // 1 2 3 4 =>
+                // 1 2, 2 3, 3 4
+                // 1 2 3 4 5 6 7 =>
+                // 1 2, 2 3, 3 4, 4 5, 5 6, 6 7
+                num_entries = (num_entries - 1) * 2;
+            }
+            var slice: []u32 = try allocator.alloc(u32, num_entries);
+            var backup_slice: []u32 = try allocator.alloc(u32, num_entries);
+            if (nodes.len > 2) {
+                var j: usize = 0;
+                for (0..(nodes.len - 1)) |i| {
+                    slice[j] = @as(u32, nodes[i + 1]);
+                    slice[j + 1] = @as(u32, nodes[i]);
+                    j += 2;
+                }
+            } else {
+                slice[0] = nodes[0];
+            }
+
             number_of_edges = number_of_edges >> 1;
             var retraceable = try retraceable_contraction.RetraceableContractionSequence(T).init(graph.allocator, @intCast(T, nodes.len), number_of_edges);
-            return .{ .bfs_levels = bfs_level, .subgraph = InducedSubGraph(T).fromSlice(graph, nodes), .tww = @intCast(T, nodes.len - 1), .best_contraction_sequence = contraction_seq, .current_contraction_seq = retraceable };
+            return .{
+                .bfs_levels = bfs_level,
+                .subgraph = InducedSubGraph(T).fromSlice(graph, nodes),
+                .tww = @intCast(T, nodes.len - 1),
+                .best_contraction_sequence = contraction_seq,
+                .current_contraction_seq = retraceable,
+                .contraction_slice = slice,
+                .backup_contraction_slice = backup_slice,
+            };
         }
     };
 }

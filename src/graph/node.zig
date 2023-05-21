@@ -88,7 +88,6 @@ pub fn LargeNodeQueryProcessor(comptime T: type) type {
 	};
 }
 
-
 // Id is omitted must be stored outside of the struct
 pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_threshold: u32) type {
 	comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -97,10 +96,12 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
 	
 	return struct {
 		const Self = @This();
+		pub const EdgeIterType = compressed_bitmap.FastCompressedBitmap(T,promote_threshold,degrade_threshold).FastCompressedBitmapIterator;
 		black_edges: compressed_bitmap.FastCompressedBitmap(T,promote_threshold,degrade_threshold),
 		red_edges: compressed_bitmap.FastCompressedBitmap(T,promote_threshold,degrade_threshold),
 		high_degree_node: ?*LargeNodeQueryProcessor(T),
 		num_leafes: T,
+		largest_red_one_nb: T,
 
 		pub fn promoteToLargeDegreeNode(self: *Self, graph: *const Graph(T)) !void {
 			if(self.high_degree_node == null) {

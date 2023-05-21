@@ -107,7 +107,7 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
         }
     }
 
-    std.debug.print("{s:<25} | {:>8} | {:>8} | {:>4} {c} {?:>4} | {:>6}ms\n", .{ short_name, loaded_graph.number_of_nodes, loaded_graph.number_of_edges, tww, cmp, best_known, elapsed });
+    std.debug.print("{s:<25} | {:>8} | {:>8} | {:>4} {c} {?:>4} | {:>6}ms ({:>3} min)\n", .{ short_name, loaded_graph.number_of_nodes, loaded_graph.number_of_edges, tww, cmp, best_known, elapsed, elapsed / 60_000 });
 
     if (best_known) |value| {
         if (tww > value) {

@@ -21,7 +21,6 @@ const ContraScore = struct {
     rem: Node,
     sur: Node,
     processed: bool,
-    distTwo: bool,
 };
 
 const CandidateListRef = struct {
@@ -51,6 +50,7 @@ const FeatureLeafNodePruning: bool = true;
 const FeatureTwinPruning: bool = true;
 const FeatureOuterPathPruning: bool = true;
 const FeatureTinyGraphBelowSlack: bool = true; // almost no effect, as it only helps, if we're about to find a solution
+const FeaturePruneTinyRedBridges: bool = true;
 
 const FeatureTryLBFirst: bool = true;
 const BudgetHeuCSLB: u64 = 0; // ms
@@ -92,10 +92,12 @@ pub const ExactBranchAndBound = struct {
     rng: ?*std.rand.DefaultPrng,
 
     pub fn new(allocator: std.mem.Allocator, number_of_nodes: Node) !Self {
-        var working_seq = try std.ArrayList(Contraction).initCapacity(allocator, number_of_nodes);
+        std.debug.assert(number_of_nodes > 0);
+
+        var working_seq = try std.ArrayList(Contraction).initCapacity(allocator, number_of_nodes - 1);
         errdefer working_seq.deinit();
 
-        var best_seq = try std.ArrayList(Contraction).initCapacity(allocator, number_of_nodes);
+        var best_seq = try std.ArrayList(Contraction).initCapacity(allocator, number_of_nodes - 1);
         errdefer best_seq.deinit();
 
         var candidate_lists = try std.ArrayList(CandidateListRef).initCapacity(allocator, @boolToInt(FeatureReuseCandidates) * (20 + number_of_nodes));
@@ -207,7 +209,7 @@ pub const ExactBranchAndBound = struct {
 
                 std.debug.assert(oldNodeIdOfNew[newNodeIdOfOld[c.rem]] == c.rem);
                 std.debug.assert(oldNodeIdOfNew[newNodeIdOfOld[c.sur]] == c.sur);
-                candidates.appendAssumeCapacity(ContraScore{ .rem = newNodeIdOfOld[c.rem], .sur = newNodeIdOfOld[c.sur], .score = c.score, .redDeg = c.redDeg, .distTwo = c.distTwo, .processed = c.processed });
+                candidates.appendAssumeCapacity(ContraScore{ .rem = newNodeIdOfOld[c.rem], .sur = newNodeIdOfOld[c.sur], .score = c.score, .redDeg = c.redDeg, .processed = c.processed });
             }
 
             var invalid = @ptrCast(*Graph.BitSet, @alignCast(@alignOf(Graph.BitSet), last.invalid));
@@ -269,6 +271,10 @@ pub const ExactBranchAndBound = struct {
 
     pub fn solve(self: *Self, comptime Graph: type, graph: *const Graph, slack: Node) anyerror!Node {
         var n: Node = graph.has_neighbors.cardinality();
+
+        if (n > 0 and n + self.working_seq.items.len != self.number_of_nodes) {
+            std.debug.print("n={d} |cs|={d} initial={d}\n", .{ n, self.working_seq.items.len, self.number_of_nodes });
+        }
 
         if (self.timeout_ms) |dur_ms| {
             if ((try std.time.Instant.now()).since(self.start_time) > dur_ms * 1000_000) {
@@ -364,9 +370,12 @@ pub const ExactBranchAndBound = struct {
 
     pub fn initial_kernelization(self: *Self, comptime Graph: type, graph: *Graph, slack: Node) !void {
         _ = slack;
+
         if (!FeatureLeafNodePruning) {
             return;
         }
+
+        std.debug.assert(self.working_seq.items.len == 0);
 
         std.debug.print("Before Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
 
@@ -377,6 +386,10 @@ pub const ExactBranchAndBound = struct {
             }
 
             break;
+        }
+
+        for (self.working_seq.items) |ctr| {
+            std.debug.assert(graph.deg(ctr.rem) == 0);
         }
 
         std.debug.print("After Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
@@ -407,6 +420,8 @@ pub const ExactBranchAndBound = struct {
                     //std.debug.print("Initial prune twin {d} -> {d}\n", .{ u, v });
                     graph.mergeNodes(v, u, &red);
                     self.working_seq.appendAssumeCapacity(Contraction{ .rem = v, .sur = u });
+
+                    std.debug.assert(graph.deg(v) == 0);
                     return true;
                 }
             }
@@ -448,8 +463,14 @@ pub const ExactBranchAndBound = struct {
             const survivor = leafs_iter.next().?;
             while (leafs_iter.next()) |rem| {
                 //std.debug.print("Initial leaf {d} -> {d}\n", .{ rem, survivor });
-                try self.working_seq.append(Contraction{ .rem = rem, .sur = survivor });
+                std.debug.assert(graph.deg(survivor) == 1);
+                std.debug.assert(graph.deg(rem) == 1);
+
+                self.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = survivor });
                 graph.mergeNodes(rem, survivor, null); // TODO: this can be made faster by removing the Edge
+
+                std.debug.assert(graph.deg(survivor) == 1);
+
                 change = true;
             }
         }
@@ -553,15 +574,15 @@ fn Frame(comptime Graph: type) type {
                 std.debug.assert(self.input_graph.has_neighbors.isSet(c.rem) and self.input_graph.has_neighbors.isSet(c.sur));
 
                 // undo all changes possibly made by an earlier iteration
-                try self.context.working_seq.resize(initial_seq_len);
+                self.context.working_seq.shrinkRetainingCapacity(initial_seq_len);
                 self.work_graph.copyFrom(self.input_graph);
                 self.work_tww = self.slack;
                 self.work_contracted.unsetAll();
 
-                try self.contractNodes(c.rem, c.sur, !c.distTwo);
+                try self.contractNodes(c.rem, c.sur);
 
                 if (!((self.lower_bound_mode and self.work_tww == 0) or (c.redDeg <= self.work_tww))) {
-                    std.debug.print("lbm: {d} red: {d} tww: {d} dist2: {any}", .{ @boolToInt(self.lower_bound_mode), c.redDeg, self.work_tww, c.distTwo });
+                    std.debug.print("lbm: {d} red: {d} tww: {d}", .{ @boolToInt(self.lower_bound_mode), c.redDeg, self.work_tww });
                 }
 
                 std.debug.assert((self.lower_bound_mode and self.work_tww == 0) or (c.redDeg <= self.work_tww));
@@ -612,32 +633,22 @@ fn Frame(comptime Graph: type) type {
             return result;
         }
 
-        fn contractNodes(self: *Self, rem: Node, sur: Node, atleast_dist_three: bool) !void {
-            std.debug.assert(self.work_graph.deg(rem) > 0);
-            std.debug.assert(self.work_graph.deg(sur) > 0);
+        fn contractNodes(self: *Self, rem: Node, sur: Node) !void {
+            self.work_graph.mergeNodes(rem, sur, null);
 
-            if (self.lower_bound_mode) {
-                self.work_contracted.assignOr(self.work_graph.constTwoNeighbors(rem));
+            self.work_tww = @max(self.work_tww, self.work_graph.redDeg(sur));
+            self.work_tww = @max(self.work_tww, self.work_graph.maxRedDegreeIn(self.work_graph.constRedNeighbors(sur)));
+            self.work_contracted.assignOr(self.work_graph.constTwoNeighbors(sur));
+            _ = self.work_contracted.setBit(sur);
 
-                self.work_graph.removeEdgesAtNode(rem);
-            } else {
-                self.work_graph.mergeNodes(rem, sur, null);
-                self.work_tww = @max(self.work_tww, self.work_graph.redDeg(sur));
-                self.work_tww = @max(self.work_tww, self.work_graph.maxRedDegreeIn(self.work_graph.constRedNeighbors(sur)));
-                self.work_contracted.assignOr(self.work_graph.constTwoNeighbors(sur));
-                _ = self.work_contracted.setBit(sur);
-            }
+            self.context.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = sur });
 
             if (self.work_tww >= self.context.upper_excl) {
                 return;
             }
 
-            self.context.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = sur });
-
             while (true) {
-                if (!atleast_dist_three) {
-                    _ = try self.pruneLeafsAt(sur);
-                }
+                _ = try self.pruneLeafsAt(sur);
 
                 if (try self.pruneTwinsAt(sur)) {
                     continue;
@@ -647,10 +658,54 @@ fn Frame(comptime Graph: type) type {
                     continue;
                 }
 
+                if (try self.tinyRedBridgesAt(sur)) {
+                    continue;
+                }
+
                 self.tinyGraphBelowSlack();
 
                 break;
             }
+        }
+
+        fn tinyRedBridgesAt(self: *Self, host: Node) anyerror!bool {
+            _ = host;
+            if (!FeaturePruneTinyRedBridges) {
+                return false;
+            }
+
+            var u: u32 = 0;
+            while (u < Graph.NumNodes) : (u += 1) {
+                var deg = self.work_graph.deg(u);
+
+                if (0 == deg or deg > 2) {
+                    continue;
+                }
+
+                var rdeg = self.work_graph.redDeg(u);
+                var bdeg = deg - rdeg;
+
+                if (bdeg > 1) {
+                    continue;
+                }
+
+                var neigh = self.work_graph.constNeighbors(u).iter_set();
+                while (neigh.next()) |v| {
+                    if (bdeg > 0 and self.work_graph.constRedNeighbors(u).isSet(v)) {
+                        // if we have a black neighbor, we may only contract with it
+                        continue;
+                    }
+
+                    if (self.work_graph.deg(v) != self.work_graph.redDeg(v) + bdeg) {
+                        continue;
+                    }
+
+                    try self.contractNodes(u, v);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         fn tinyGraphBelowSlack(self: *Self) void {
@@ -808,7 +863,6 @@ fn Frame(comptime Graph: type) type {
                 .redDeg = red_degree,
                 .rem = v,
                 .sur = u,
-                .distTwo = distAtmostTwo,
                 .processed = false,
             };
 
@@ -862,46 +916,36 @@ fn Frame(comptime Graph: type) type {
                     continue;
                 }
 
-                try self.contractNodes(u, v, false);
+                try self.contractNodes(u, v);
                 return true;
             }
 
             return false;
         }
 
-        noinline fn pruneLeafsAt(self: *Self, u: Node) !bool {
+        noinline fn pruneLeafsAt(self: *Self, u: Node) anyerror!bool {
             if (!FeatureLeafNodePruning) {
                 return false;
             }
 
-            var leafs = Graph.BitSet.new();
             var neighs = self.work_graph.constNeighbors(u).iter_set();
+
+            var l1 = while (neighs.next()) |v| {
+                if (self.work_graph.deg(v) == 1) {
+                    break v;
+                }
+            } else {
+                return false;
+            };
+
             while (neighs.next()) |v| {
                 if (self.work_graph.deg(v) == 1) {
-                    _ = leafs.setBit(v);
+                    try self.contractNodes(l1, v);
+                    return true;
                 }
             }
 
-            if (leafs.cardinality() < 2) {
-                return false;
-            }
-
-            var liter = leafs.iter_set();
-            var sur = liter.next().?;
-
-            var any_red: bool = false;
-            while (liter.next()) |v| {
-                any_red = any_red or self.work_graph.removeEdge(u, v).?.isRed();
-
-                // no need to call contractNodes, since removing leafs does not warrant new checks
-                try self.context.working_seq.append(Contraction{ .rem = v, .sur = sur });
-            }
-
-            if (any_red) {
-                _ = self.work_graph.addEdge(u, sur, mg.Color.Red);
-            }
-
-            return true;
+            return false;
         }
 
         noinline fn pruneTwinsAt(self: *Self, u: Node) anyerror!bool {
@@ -923,7 +967,7 @@ fn Frame(comptime Graph: type) type {
                         red.is_equal(self.work_graph.constRedNeighbors(w)))
                     {
                         //std.debug.print("Twin be gone", .{});
-                        try self.contractNodes(v, w, false);
+                        try self.contractNodes(v, w);
                         return true;
                     }
                 }
@@ -1112,7 +1156,7 @@ fn subgraphLB(comptime N: u32, allocator: std.mem.Allocator, graph: *const mg.Ma
 
     //    std.debug.print("Attempt LB with subgraph n={d} m={d} lower={d} upper={d}\n", .{ nodes.cardinality(), local_graph.numberOfEdges(), lower, upper });
 
-    var solver = ExactBranchAndBound.new(allocator, local_graph.numberOfNodes()) catch {
+    var solver = ExactBranchAndBound.new(allocator, local_graph.has_neighbors.cardinality()) catch {
         return lower;
     };
     defer solver.deinit();
@@ -1185,7 +1229,7 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
         }
     }
 
-    var solver = ExactBranchAndBound.new(context.allocator, graph.numberOfNodes()) catch |e| {
+    var solver = ExactBranchAndBound.new(context.allocator, graph.has_neighbors.cardinality()) catch |e| {
         context.result = e;
         return;
     };

@@ -26,7 +26,8 @@ pub const RowType = enum(usize) {
 };
 
 pub const DigestAlgo = std.crypto.hash.Sha1;
-pub const Digest = [DigestAlgo.digest_length]u8;
+pub const Digest = [DigestAlgo.digest_length + 5]u8;
+const MaxStackNodes: u32 = 128;
 
 pub fn MatrixGraph(comptime num_nodes: u32) type {
     return struct {
@@ -37,30 +38,50 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
 
         allocator: std.mem.Allocator,
         num_edges: u32,
-        matrix: []BitSet,
+        matrix: if (num_nodes <= MaxStackNodes) [3 * num_nodes]BitSet else []BitSet,
         has_neighbors: BitSet,
         invalid_two_neighbors: BitSet,
         batch_updates: bool,
 
         pub fn new(allocator: std.mem.Allocator) !Self {
-            var matrix = try allocator.alloc(BitSet, 3 * num_nodes);
-            errdefer allocator.free(matrix);
+            var result: Self = undefined;
 
-            const empty = FixedSizeSet(num_nodes).new();
-            for (matrix) |*r| r.* = empty;
+            if (num_nodes > MaxStackNodes) {
+                var matrix = try allocator.alloc(BitSet, 3 * num_nodes);
+                errdefer allocator.free(matrix);
 
-            return Self{
-                .allocator = allocator,
-                .num_edges = 0,
-                .matrix = matrix,
-                .has_neighbors = BitSet.new(),
-                .invalid_two_neighbors = BitSet.newAllSet(),
-                .batch_updates = false,
-            };
+                const empty = FixedSizeSet(num_nodes).new();
+                for (matrix) |*r| r.* = empty;
+
+                result = Self{
+                    .allocator = allocator,
+                    .num_edges = 0,
+                    .matrix = matrix,
+                    .has_neighbors = BitSet.new(),
+                    .invalid_two_neighbors = BitSet.newAllSet(),
+                    .batch_updates = false,
+                };
+            } else {
+                result = Self{
+                    .allocator = allocator,
+                    .num_edges = 0,
+                    .matrix = undefined,
+                    .has_neighbors = BitSet.new(),
+                    .invalid_two_neighbors = BitSet.newAllSet(),
+                    .batch_updates = false,
+                };
+
+                const empty = FixedSizeSet(num_nodes).new();
+                for (result.matrix[0..]) |*r| r.* = empty;
+            }
+
+            return result;
         }
 
         pub fn deinit(self: *const Self) void {
-            self.allocator.free(self.matrix);
+            if (num_nodes > MaxStackNodes) {
+                self.allocator.free(self.matrix);
+            }
         }
 
         pub fn copy(self: *const Self) !Self {
@@ -70,11 +91,15 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
         }
 
         pub fn copyFrom(self: *Self, other: *const Self) void {
-            self.num_edges = other.num_edges;
-            self.has_neighbors = other.has_neighbors;
-            self.invalid_two_neighbors = other.invalid_two_neighbors;
-            self.batch_updates = other.batch_updates;
-            std.mem.copy(BitSet, self.matrix, other.matrix);
+            if (num_nodes > MaxStackNodes) {
+                self.num_edges = other.num_edges;
+                self.has_neighbors = other.has_neighbors;
+                self.invalid_two_neighbors = other.invalid_two_neighbors;
+                self.batch_updates = other.batch_updates;
+                std.mem.copy(BitSet, self.matrix, other.matrix);
+            } else {
+                self.* = other.*;
+            }
         }
 
         pub inline fn numberOfNodes(self: *const Self) Node {
@@ -267,6 +292,9 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
         }
 
         pub fn mergeNodes(self: *Self, rem: Node, sur: Node, red_neighbors: ?*const BitSet) void {
+            std.debug.assert(self.deg(rem) > 0);
+            std.debug.assert(self.deg(sur) > 0);
+
             if (red_neighbors) |reds| {
                 // TODO: Implement this by bit magic
                 var new_reds = reds.copyWithSub(self.redNeighbors(sur));
@@ -278,6 +306,8 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                 }
 
                 self.removeEdgesAtNode(rem);
+
+                std.debug.assert(self.deg(rem) == 0);
 
                 self.assertIsConsistent();
             } else {
@@ -430,7 +460,8 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             var digest = DigestAlgo.init(.{});
             digest.update(std.mem.sliceAsBytes(self.matrix[0..]));
             var output: Digest = undefined;
-            digest.final(&output);
+            digest.final(output[5..]);
+            self.digestHeader(&output);
             return output;
         }
 
@@ -462,8 +493,9 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                 }
             }
 
-            var round = self.has_neighbors.cardinality();
-            while (round > 0) : (round -= 1) {
+            var n = self.has_neighbors.cardinality();
+            var round: u32 = 0;
+            while (round < n) : (round += 1) {
                 std.sort.sort(WFScore, nodeHash[0..], {}, cmpWFScore);
 
                 var round_hash = murmur64(round);
@@ -489,9 +521,40 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
 
             var digest = DigestAlgo.init(.{});
             digest.update(std.mem.sliceAsBytes(tmp[0..]));
+
+            if (false) {
+                var u: u32 = 0;
+                while (u < n) : (u += 1) {
+                    var v = u + 1;
+                    while (v < n) : (v += 1) {
+                        var a = nodeHash[u].node;
+                        var b = nodeHash[v].node;
+
+                        if (self.constNeighbors(a).isSet(b)) {
+                            var edge = [_]u32{ a, b, @boolToInt(self.constRedNeighbors(a).isSet(b)) };
+                            digest.update(std.mem.sliceAsBytes(edge[0..]));
+                        }
+                    }
+                }
+            }
+
             var output: Digest = undefined;
-            digest.final(&output);
+            digest.final(output[5..]);
+            self.digestHeader(&output);
             return output;
+        }
+
+        fn digestHeader(self: *const Self, digest: *Digest) void {
+            var bytes = std.mem.sliceAsBytes(digest[0..5]);
+
+            var n = self.has_neighbors.cardinality();
+            bytes[0] = @truncate(u8, n >> 8);
+            bytes[1] = @truncate(u8, n);
+
+            var m = self.numberOfEdges();
+            bytes[2] = @truncate(u8, m >> 16);
+            bytes[3] = @truncate(u8, m >> 8);
+            bytes[4] = @truncate(u8, m);
         }
 
         pub fn numEdgesInComplement(self: *const Self) u32 {
@@ -548,7 +611,7 @@ const WFScore = struct {
 };
 
 fn cmpWFScore(_: void, a: WFScore, b: WFScore) bool {
-    return a.deg < b.deg or (a.deg == b.deg and (a.score < b.score or (a.score == b.score and a.node < b.node)));
+    return a.deg > b.deg or (a.deg == b.deg and (a.score < b.score or (a.score == b.score and a.node < b.node)));
 }
 
 test "New Matrix Graph" {

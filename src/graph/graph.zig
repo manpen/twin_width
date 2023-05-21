@@ -665,7 +665,7 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub fn solveExact(self: *Self) !T {
-            const ForceBnBSolution = false;
+            const ForceBnBSolution = true;
 
             var org_graph = try std.ArrayList(exact_bs.MatrixGraphFromInducedSubGraph).initCapacity(self.allocator, self.connected_components.items.len);
             defer org_graph.deinit();
@@ -676,6 +676,13 @@ pub fn Graph(comptime T: type) type {
             }
 
             var heu_tww = @intCast(u32, try self.solveGreedy());
+
+            if (true) {
+                std.debug.print("Heuristic TWW: {d}\n", .{heu_tww});
+                for (self.connected_components.items) |*cc| {
+                    std.debug.print("  -> CC: n={d} tww={d}\n", .{ cc.subgraph.nodes.len, cc.tww });
+                }
+            }
 
             var lower: T = 0;
             while (true) {

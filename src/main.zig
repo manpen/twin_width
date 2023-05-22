@@ -89,7 +89,7 @@ pub fn main() !void {
 		var dirit = dirIter.iterate();
 
 
-		var large_buffer = try allocator.alloc(u8,1024*1024*3000);
+		var large_buffer = try allocator.alloc(u8,1024*1024*6000);
 		defer allocator.free(large_buffer);
 
 		var hpa_allocator = std.heap.FixedBufferAllocator.init(large_buffer);
@@ -174,7 +174,12 @@ pub fn main() !void {
 		std.sort.sort([]u8, file_list.items, {}, lessThanU8);
 
 		var cumulative:u32 = 0;
+		var skip:u32 = 3;
 		for(file_list.items) |name| {
+			if(skip>0) {
+				skip-=1;
+				continue;
+			}
 			var complete_name = try std.fmt.allocPrint(allocator,"{s}/{s}",.{target_directory,name});
 			defer allocator.free(complete_name);
 

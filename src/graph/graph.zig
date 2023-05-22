@@ -65,7 +65,7 @@ pub fn Graph(comptime T: type) type {
 				last_merge_first_level_merge: bool,
 				last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 				
-				min_hash: min_hash_mod.MinHashSimilarity(T,3),
+				min_hash: min_hash_mod.MinHashSimilarity(T,2),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
@@ -298,7 +298,86 @@ pub fn Graph(comptime T: type) type {
             }
         };
 
-				pub fn calculateMaxTwwOfNewNeighbors(self: *Self, erased: T, survivor: T) T {
+				pub const TwwScorer = struct {
+					tww: T,
+					tww_nb: T,
+					delta_red_edges: i32,
+
+					pub fn default() TwwScorer {
+						return .{.tww = std.math.maxInt(T), .tww_nb = std.math.maxInt(T), .delta_red_edges = std.math.maxInt(i32)};
+					}
+
+					pub fn betterTww(self: *TwwScorer, other: *TwwScorer, current_tww: T) bool {
+						if(self.tww_nb <= current_tww) {
+							return self.tww < other.tww;
+						}
+						else {
+							return self.tww_nb <= other.tww_nb and self.tww < other.tww;
+						}
+					}
+
+					pub fn better(self: *TwwScorer, other: *TwwScorer, current_tww: T) bool {
+						if(self.tww_nb <= current_tww) {
+							return self.delta_red_edges < other.delta_red_edges;
+						}
+						else {
+							return self.tww_nb < other.tww_nb or (self.tww_nb == other.tww_nb and self.tww < other.tww);
+						}
+					}
+				};
+
+				pub fn calculateMaxTwwScore(self: *Self, erased: T, survivor: T) TwwScorer {
+            var delta_red: T = 0;
+						var tww:T = 0;
+            var red_iter = self.node_list[erased].red_edges.iterator();
+						var delta_red_edges:i32 = 0;
+						var correction_factor:T = 0;
+
+            while (red_iter.next()) |item| {
+                if (item == survivor) {
+									delta_red_edges-=@intCast(i32,std.math.log2_int(u32,self.node_list[item].red_edges.cardinality()+1));
+									correction_factor=1;
+									continue;
+								}
+
+                if (!self.node_list[survivor].red_edges.contains(item)) {
+                    delta_red += 1;
+                }
+								else {
+									delta_red_edges-=@intCast(i32,std.math.log2_int(u32,self.node_list[item].red_edges.cardinality()+1));
+								}
+            }
+
+            delta_red += self.node_list[survivor].red_edges.cardinality();
+						delta_red-=correction_factor;
+
+            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+            while (black_iter.next()) |item| {
+                if (item == survivor or item == erased) {
+                    continue;
+                }
+                // Came from erased
+                if (black_iter.first) {
+                    if (!self.node_list[survivor].red_edges.contains(item)) {
+                        delta_red += 1;
+												delta_red_edges+=@intCast(i32,std.math.log2_int(u32,self.node_list[item].red_edges.cardinality()+1));
+												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    }
+                }
+                // Came from survivor
+                else {
+                    if (!self.node_list[erased].red_edges.contains(item)) {
+                        delta_red += 1;
+												delta_red_edges+=@intCast(i32,std.math.log2_int(u32,self.node_list[item].red_edges.cardinality()+1));
+												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    }
+                }
+            }
+						return .{ .tww = delta_red, .tww_nb = std.math.max(delta_red,tww), .delta_red_edges = delta_red_edges };
+				}
+
+				pub fn calculateMaxTwwOfNewNeighbors(self: *Self, erased: T, survivor: T) struct{T,T} {
             var delta_red: T = 0;
 						var tww:T = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
@@ -335,7 +414,7 @@ pub fn Graph(comptime T: type) type {
                     }
                 }
             }
-						return std.math.max(delta_red,tww);
+						return .{std.math.max(delta_red,tww),delta_red};
 				}
 
 				pub fn calculateTwwOfMergeSurvivor(self: *Self, erased: T, survivor: T) T {
@@ -685,7 +764,6 @@ pub fn Graph(comptime T: type) type {
 						//}
 						try self.min_hash.rehashNode(survivor, self);
 						//try self.min_hash.removeNode(erased);
-						try self.min_hash.finalizeRehashes(self);
 
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
@@ -839,10 +917,7 @@ pub fn Graph(comptime T: type) type {
 								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
             };
 
-						var start_t = try std.time.Instant.now();
-						var hash = try min_hash_mod.MinHashSimilarity(T,3).init(graph_instance.allocator,320,1923812,graph_instance.number_of_nodes);
-						var end_t = try std.time.Instant.now();
-						std.debug.print("Calculated min hash in {}ms move size {}\n",.{end_t.since(start_t)/(1000*1000), hash.move_queue.len});
+						var hash = try min_hash_mod.MinHashSimilarity(T,2).init(graph_instance.allocator,64,1923812,graph_instance.number_of_nodes);
 						graph_instance.min_hash = hash;
 
 						return graph_instance;

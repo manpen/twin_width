@@ -692,8 +692,8 @@ pub fn InducedSubGraph(comptime T: type) type {
 								diff_nodes.clearRetainingCapacity();
 								var def = Graph(T).InducedTwinWidthPotential.default();
 
-								var moves = try std.BoundedArray(min_hash.MinHashEntry,20*K).init(0);
-								try self.graph.min_hash.getNextKMoves(20*K, &moves,self.graph);
+								var moves = try std.BoundedArray(min_hash.MinHashEntry,10_000).init(0);
+								try self.graph.min_hash.getNextKMoves(10_000, &moves,self.graph);
 								var direct_score:T = std.math.maxInt(T);
 								for(0..moves.len) |mv_index| {
 									const mv = moves.buffer[mv_index];
@@ -728,7 +728,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 									return err;
 								};
 								std.debug.print("Current tww {}\n",.{seq.getTwinWidth()});
-								try self.graph.min_hash.reinsertKMoves(20*K, &moves, self.graph);
+								try self.graph.min_hash.reinsertKMoves(10_000, &moves, self.graph);
 								contractions_left-=1;
 						}
 						return seq.getTwinWidth();
@@ -858,7 +858,10 @@ pub fn InducedSubGraph(comptime T: type) type {
 				}
 
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), find_articulation_points: bool) !T {
+						var start_t = try std.time.Instant.now();
 						try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
+						var end_t = try std.time.Instant.now();
+						std.debug.print("Calculated min hash in {}ms move size {}\n",.{end_t.since(start_t)/(1000*1000), self.graph.min_hash.sim_nodes.count()});
             _ = find_articulation_points;
             // Use once at the beginning later we will only consider merges which involve the survivor of the last merge
             // Paths might be dangerous
@@ -939,26 +942,33 @@ pub fn InducedSubGraph(comptime T: type) type {
                     min_contraction = contraction.Contraction(T){ .survivor = first_node, .erased = selection.target };
                 }
 
-								var moves = try std.BoundedArray(min_hash.MinHashEntry,3*K).init(0);
+								//var moves = try std.BoundedArray(min_hash.MinHashEntry,3*K).init(0);
 
-								try self.graph.min_hash.getNextKMoves(3*K, &moves,self.graph);
-								var def = Graph(T).InducedTwinWidthPotential.default();
-								var min_direct_score = self.graph.calculateTwwOfMergeSurvivor(min_contraction.erased,min_contraction.survivor);
-								for(0..moves.len) |mv_index| {
-									const mv = moves.buffer[mv_index];
+								//try self.graph.min_hash.getNextKMoves(3*K, &moves,self.graph);
+								//var def = Graph(T).InducedTwinWidthPotential.default();
+								//var min_direct_score = self.graph.calculateTwwOfMergeSurvivor(min_contraction.erased,min_contraction.survivor);
+								//for(0..moves.len) |mv_index| {
+								//	const mv = moves.buffer[mv_index];
 
-									const move = mv.intoMove(T,self.graph.number_of_nodes);
-									var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&def, seq.getTwinWidth());
-									var direct_score = self.graph.calculateTwwOfMergeSurvivor(move.erased,move.survivor);
-									if(global_score.isLess(selection.potential,seq.getTwinWidth())) {
-										min_contraction = move;
-										selection.potential = global_score;
-										min_direct_score = direct_score;
-									}
-								}
+								//	const move = mv.intoMove(T,self.graph.number_of_nodes);
+								//	var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&def, seq.getTwinWidth());
+								//	var direct_score = self.graph.calculateTwwOfMergeSurvivor(move.erased,move.survivor);
+								//	if(global_score.isLess(selection.potential,seq.getTwinWidth())) {
+								//		min_contraction = move;
+								//		selection.potential = global_score;
+								//		min_direct_score = direct_score;
+								//	}
+								//}
 								//try self.graph.min_hash.reinsertFetchedMoves();
 
                 // Reset all variables which were set to select the best postponed move
+								var def = Graph(T).InducedTwinWidthPotential.default();
+								_ = def;
+
+								if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
+									_ = self.graph.calculateMaxTwwOfNewNeighbors(best.erased,best.survivor);
+									min_contraction = best;
+								}
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
 
@@ -966,7 +976,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 
 
                 total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge, seq, min_contraction, &contractions_left), total_tww);
-								try self.graph.min_hash.reinsertKMoves(3*K,&moves, self.graph);
+								//try self.graph.min_hash.reinsertKMoves(3*K,&moves, self.graph);
 
                 solver.priority_queue.addTick(@intCast(T, contractions_left_copy - contractions_left));
 

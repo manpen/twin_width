@@ -13,6 +13,7 @@ const Contraction = struct { rem: Node, sur: Node };
 pub const SolverError = error{
     Infeasable,
     Timeout,
+    UnknownError,
 };
 
 const ContraScore = struct {
@@ -29,12 +30,18 @@ const CandidateListRef = struct {
     invalid: *void,
 };
 
+const INITIAL_CACHE_SIZE_MB: usize = 100;
+
+const FeatureParanoia: bool = false;
+
 const FeatureReuseCandidates: bool = true;
-const FeatureShrinkGraph: bool = true;
-const FeatureSkipProcessed: bool = true;
+const FeatureParanoidCandidates: bool = FeatureReuseCandidates and false; // additional expensive assertions
+const FeatureSkipProcessed: bool = FeatureReuseCandidates and true;
+
+const FeatureShrinkGraph: bool = false;
+
 const FeatureSkipInfeasibleCandidatesEarly: bool = true;
 const FeatureSkipPathNodes: bool = true;
-const FeatureComplements: bool = false; // BROKEN
 const FeatureCriticalCandidates: bool = true; // skips dist>3 pairs with critical black neighbor
 
 const FeaturePessimiticCandidateAllocation: bool = false;
@@ -45,17 +52,22 @@ const FeatureUseWFHash: bool = false;
 
 const FeatureReportProgress: u32 = 1 * 1000_000; // set to 0 to disable
 
-const FeatureInitialPruning: bool = true;
-const FeatureLeafNodePruning: bool = true;
-const FeatureTwinPruning: bool = true;
-const FeatureOuterPathPruning: bool = true;
-const FeatureTinyGraphBelowSlack: bool = true; // almost no effect, as it only helps, if we're about to find a solution
-const FeaturePruneTinyRedBridges: bool = true;
+const FeaturePruning: bool = true;
+const FeatureInitialPruning: bool = FeaturePruning and true;
+const FeatureLeafNodePruning: bool = FeaturePruning and true;
+const FeatureTwinPruning: bool = FeaturePruning and true;
+const FeatureTinyGraphBelowSlack: bool = FeaturePruning and true; // almost no effect, as it only helps, if we're about to find a solution
+const FeaturePruneTinyRedBridges: bool = FeaturePruning and true;
+
+const FeatureComplements: bool = false; // BROKEN
+const FeatureOuterPathPruning: bool = FeaturePruning and true; // BROKEN
 
 const FeatureTryLBFirst: bool = true;
+
 const BudgetHeuCSLB: u64 = 0; // ms
-const BudgetSubgraphLB: u64 = 10_000; // ms
+const BudgetSubgraphLB: u64 = 20_000; // ms
 const BudgetPruningLB: u64 = 0; // ms
+const BudgetAdvSubgraphLB: u64 = 0; // ms
 
 const SolSummary = struct {
     tww: Node,
@@ -92,7 +104,7 @@ pub const ExactBranchAndBound = struct {
     rng: ?*std.rand.DefaultPrng,
 
     pub fn new(allocator: std.mem.Allocator, number_of_nodes: Node) !Self {
-        std.debug.assert(number_of_nodes > 0);
+        assert(number_of_nodes > 0);
 
         var working_seq = try std.ArrayList(Contraction).initCapacity(allocator, number_of_nodes - 1);
         errdefer working_seq.deinit();
@@ -106,13 +118,13 @@ pub const ExactBranchAndBound = struct {
         var infeasible_cache = InfeasibleCache.init(allocator);
         errdefer infeasible_cache.deinit();
         if (FeatureUseInfeasibleCache) {
-            try infeasible_cache.ensureTotalCapacity((2 << 30) / @sizeOf(mg.Digest));
+            try infeasible_cache.ensureTotalCapacity((INITIAL_CACHE_SIZE_MB << 10) / @sizeOf(mg.Digest));
         }
 
         var solution_cache = SolutionCache.init(allocator);
         errdefer solution_cache.deinit();
-        if (FeatureUseInfeasibleCache) {
-            try solution_cache.ensureTotalCapacity((2 << 30) / @sizeOf(mg.Digest));
+        if (FeatureUseSolutionCache) {
+            try solution_cache.ensureTotalCapacity((INITIAL_CACHE_SIZE_MB << 10) / @sizeOf(mg.Digest));
         }
 
         var now = try std.time.Instant.now();
@@ -154,7 +166,7 @@ pub const ExactBranchAndBound = struct {
 
     /// Sets exclusive upper bound, i.e. a solution of size `ub - 1` is acceptable.
     pub fn setUpperBound(self: *Self, ub: Node) void {
-        std.debug.assert(ub > 0);
+        assert(ub > 0);
         self.upper_excl = ub;
     }
 
@@ -207,8 +219,8 @@ pub const ExactBranchAndBound = struct {
                     continue;
                 }
 
-                std.debug.assert(oldNodeIdOfNew[newNodeIdOfOld[c.rem]] == c.rem);
-                std.debug.assert(oldNodeIdOfNew[newNodeIdOfOld[c.sur]] == c.sur);
+                assert(oldNodeIdOfNew[newNodeIdOfOld[c.rem]] == c.rem);
+                assert(oldNodeIdOfNew[newNodeIdOfOld[c.sur]] == c.sur);
                 candidates.appendAssumeCapacity(ContraScore{ .rem = newNodeIdOfOld[c.rem], .sur = newNodeIdOfOld[c.sur], .score = c.score, .redDeg = c.redDeg, .processed = c.processed });
             }
 
@@ -259,7 +271,7 @@ pub const ExactBranchAndBound = struct {
         const old_contractions = self.working_seq.items.len;
         const upper_before = self.upper_excl;
         var result = try self.solve(Smaller, &smaller, slack);
-        std.debug.assert(self.upper_excl < upper_before);
+        assert(self.upper_excl < upper_before);
 
         for (self.best_seq.items[old_contractions..]) |*ctr| {
             ctr.rem = oldNodeIdOfNew[ctr.rem];
@@ -293,7 +305,7 @@ pub const ExactBranchAndBound = struct {
         defer self.recursion_depth -= 1;
 
         // if (self.lower_bound_mode and n < self.upper_excl * 4) {
-        //    std.debug.assert(slack == 0);
+        //    assert(slack == 0);
         //    std.debug.print("Disable lower bound mode\n", .{});
         //    self.lower_bound_mode = false;
         //}
@@ -375,7 +387,7 @@ pub const ExactBranchAndBound = struct {
             return;
         }
 
-        std.debug.assert(self.working_seq.items.len == 0);
+        assert(self.working_seq.items.len == 0);
 
         std.debug.print("Before Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
 
@@ -389,7 +401,7 @@ pub const ExactBranchAndBound = struct {
         }
 
         for (self.working_seq.items) |ctr| {
-            std.debug.assert(graph.deg(ctr.rem) == 0);
+            assert(graph.deg(ctr.rem) == 0);
         }
 
         std.debug.print("After Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
@@ -421,7 +433,7 @@ pub const ExactBranchAndBound = struct {
                     graph.mergeNodes(v, u, &red);
                     self.working_seq.appendAssumeCapacity(Contraction{ .rem = v, .sur = u });
 
-                    std.debug.assert(graph.deg(v) == 0);
+                    assert(graph.deg(v) == 0);
                     return true;
                 }
             }
@@ -463,13 +475,13 @@ pub const ExactBranchAndBound = struct {
             const survivor = leafs_iter.next().?;
             while (leafs_iter.next()) |rem| {
                 //std.debug.print("Initial leaf {d} -> {d}\n", .{ rem, survivor });
-                std.debug.assert(graph.deg(survivor) == 1);
-                std.debug.assert(graph.deg(rem) == 1);
+                assert(graph.deg(survivor) == 1);
+                assert(graph.deg(rem) == 1);
 
                 self.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = survivor });
                 graph.mergeNodes(rem, survivor, null); // TODO: this can be made faster by removing the Edge
 
-                std.debug.assert(graph.deg(survivor) == 1);
+                assert(graph.deg(survivor) == 1);
 
                 change = true;
             }
@@ -546,7 +558,7 @@ fn Frame(comptime Graph: type) type {
             }
 
             // It's wasteful to reach this point with a slack that is too large. We should have pruned it earlier.
-            std.debug.assert(self.slack < self.context.upper_excl);
+            assert(self.slack < self.context.upper_excl);
 
             // It's not optimal to invoke the solver on an empty graph.
             // However, we only reach this point if we found a strictly better solution, which happens rarely.
@@ -571,7 +583,7 @@ fn Frame(comptime Graph: type) type {
                     continue;
                 }
 
-                std.debug.assert(self.input_graph.has_neighbors.isSet(c.rem) and self.input_graph.has_neighbors.isSet(c.sur));
+                assert(self.input_graph.has_neighbors.isSet(c.rem) and self.input_graph.has_neighbors.isSet(c.sur));
 
                 // undo all changes possibly made by an earlier iteration
                 self.context.working_seq.shrinkRetainingCapacity(initial_seq_len);
@@ -585,7 +597,7 @@ fn Frame(comptime Graph: type) type {
                     std.debug.print("lbm: {d} red: {d} tww: {d}", .{ @boolToInt(self.lower_bound_mode), c.redDeg, self.work_tww });
                 }
 
-                std.debug.assert((self.lower_bound_mode and self.work_tww == 0) or (c.redDeg <= self.work_tww));
+                assert((self.lower_bound_mode and self.work_tww == 0) or (c.redDeg <= self.work_tww));
 
                 if (self.work_tww >= self.context.upper_excl) {
                     continue;
@@ -621,7 +633,7 @@ fn Frame(comptime Graph: type) type {
                 };
                 result = tww_from_rec;
 
-                std.debug.assert(tww_from_rec >= self.work_tww);
+                assert(tww_from_rec >= self.work_tww);
 
                 if (tww_from_rec <= @max(self.slack, self.context.lower)) {
                     break;
@@ -634,11 +646,18 @@ fn Frame(comptime Graph: type) type {
         }
 
         fn contractNodes(self: *Self, rem: Node, sur: Node) !void {
+            if (rem < sur) {
+                return self.contractNodes(sur, rem);
+            }
+
             self.work_graph.mergeNodes(rem, sur, null);
 
             self.work_tww = @max(self.work_tww, self.work_graph.redDeg(sur));
             self.work_tww = @max(self.work_tww, self.work_graph.maxRedDegreeIn(self.work_graph.constRedNeighbors(sur)));
-            self.work_contracted.assignOr(self.work_graph.constTwoNeighbors(sur));
+            {
+                var three = self.work_graph.closedNeighborsOfSet(self.work_graph.constTwoNeighbors(sur));
+                self.work_contracted.assignOr(&three);
+            }
             _ = self.work_contracted.setBit(sur);
 
             self.context.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = sur });
@@ -678,25 +697,14 @@ fn Frame(comptime Graph: type) type {
             while (u < Graph.NumNodes) : (u += 1) {
                 var deg = self.work_graph.deg(u);
 
-                if (0 == deg or deg > 2) {
-                    continue;
-                }
-
-                var rdeg = self.work_graph.redDeg(u);
-                var bdeg = deg - rdeg;
-
-                if (bdeg > 1) {
+                if (deg > 2 or deg != self.work_graph.redDeg(u)) {
                     continue;
                 }
 
                 var neigh = self.work_graph.constNeighbors(u).iter_set();
                 while (neigh.next()) |v| {
-                    if (bdeg > 0 and self.work_graph.constRedNeighbors(u).isSet(v)) {
-                        // if we have a black neighbor, we may only contract with it
-                        continue;
-                    }
-
-                    if (self.work_graph.deg(v) != self.work_graph.redDeg(v) + bdeg) {
+                    var rdeg_v = self.work_graph.redDeg(v);
+                    if (self.work_graph.deg(v) != rdeg_v) {
                         continue;
                     }
 
@@ -725,6 +733,8 @@ fn Frame(comptime Graph: type) type {
                 self.work_graph.removeEdgesAtNode(rem);
                 self.context.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = sur });
             }
+
+            assert(self.work_graph.numberOfEdges() == 0);
         }
 
         fn computeCriticalNeighbors(self: *Self) void {
@@ -753,7 +763,7 @@ fn Frame(comptime Graph: type) type {
             if (FeatureSkipPathNodes) {
                 self.computeMergeables();
                 has_neighbors = &self.mergables;
-                std.debug.assert(self.mergables.is_subset_of(&self.input_graph.has_neighbors));
+                assert(self.mergables.is_subset_of(&self.input_graph.has_neighbors));
             } else {
                 has_neighbors = &self.input_graph.has_neighbors;
             }
@@ -773,7 +783,7 @@ fn Frame(comptime Graph: type) type {
             } else {
                 // reuse candidates from previous step
                 var prev: *const CandidateListRef = &self.context.candidate_lists.items[depth - 1];
-                std.debug.assert(prev.num_nodes == Graph.NumNodes);
+                assert(prev.num_nodes == Graph.NumNodes);
 
                 var invalid: *const Graph.BitSet = @ptrCast(*Graph.BitSet, @alignCast(@alignOf(Graph.BitSet), prev.invalid));
 
@@ -785,11 +795,22 @@ fn Frame(comptime Graph: type) type {
                         continue;
                     }
 
-                    if (!invalid.isSet(rem) and !invalid.isSet(sur)) {
-                        if (c.redDeg < self.context.upper_excl) {
-                            self.candidates.appendAssumeCapacity(c);
-                        }
+                    if (invalid.isSet(rem) or invalid.isSet(sur)) {
                         continue;
+                    }
+
+                    if (FeatureParanoidCandidates) {
+                        // debugging only
+                        var redDeg = self.input_graph.redDegreeInNeighborhoodAfterMerge(c.rem, c.sur);
+                        if (c.redDeg > redDeg) {
+                            std.debug.print("FAILED: old-red={d} new-red={d}", .{ c.redDeg, redDeg });
+                        }
+
+                        assert(c.redDeg == redDeg);
+                    }
+
+                    if (c.redDeg < self.context.upper_excl) {
+                        self.candidates.appendAssumeCapacity(c);
                     }
                 }
 
@@ -830,21 +851,24 @@ fn Frame(comptime Graph: type) type {
         }
 
         fn appendCandidatePair(self: *Self, u: Node, v: Node) void {
-            std.debug.assert(u != v);
+            assert(u != v);
 
             var distAtmostTwo = self.input_graph.constTwoNeighbors(u).isSet(v);
             var red_degree = Graph.NumNodes;
 
-            if (distAtmostTwo) {
+            if (distAtmostTwo or FeatureParanoidCandidates) {
                 //if (FeatureCriticalCandidates and (self.has_critical_neighbor.isSet(u) != self.has_critical_neighbor.isSet(v))) {
                 //    return;
                 //}
                 red_degree = self.input_graph.redDegreeInNeighborhoodAfterMerge(u, v);
             } else {
                 if (FeatureCriticalCandidates and (self.has_critical_neighbor.isSet(u) or self.has_critical_neighbor.isSet(v))) {
+                    assert(!FeatureParanoia or self.input_graph.redDegreeInNeighborhoodAfterMerge(u, v) >= self.context.upper_excl);
                     return;
                 }
                 red_degree = self.input_graph.deg(u) + self.input_graph.deg(v);
+
+                assert(!FeatureParanoia or red_degree <= self.input_graph.redDegreeInNeighborhoodAfterMerge(u, v));
             }
 
             if (FeatureSkipInfeasibleCandidatesEarly and red_degree >= self.context.upper_excl) {
@@ -861,8 +885,8 @@ fn Frame(comptime Graph: type) type {
                 ContraScore{
                 .score = score, //
                 .redDeg = red_degree,
-                .rem = v,
-                .sur = u,
+                .rem = @max(u, v),
+                .sur = @min(u, v),
                 .processed = false,
             };
 
@@ -874,7 +898,7 @@ fn Frame(comptime Graph: type) type {
         }
 
         fn registerSolution(self: *Self) void {
-            std.debug.assert(self.context.upper_excl > self.work_tww);
+            assert(self.context.upper_excl > self.work_tww);
             std.debug.print("Found a solution with tww={d}\n", .{self.work_tww});
 
             self.context.upper_excl = self.work_tww;
@@ -883,7 +907,7 @@ fn Frame(comptime Graph: type) type {
         }
 
         noinline fn pruneOuterPath(self: *Self) anyerror!bool {
-            if (!FeatureOuterPathPruning) {
+            if (!FeatureOuterPathPruning or self.slack < 2) {
                 return false;
             }
 
@@ -1114,6 +1138,257 @@ pub fn findLowerBoundSubgraph(comptime N: u32, input_graph: *const mg.MatrixGrap
     return lower_bound;
 }
 
+pub fn findLowerBoundAdvSubgraph(comptime N: u32, input_graph: *const mg.MatrixGraph(N), allocator: std.mem.Allocator, budget_ms: u64, lower: Node, upper: Node) !Node {
+    const Graph = mg.MatrixGraph(N);
+    var lower_bound = lower;
+
+    var graph = try input_graph.copy();
+    defer graph.deinit();
+    {
+        var solver = try ExactBranchAndBound.new(allocator, graph.numberOfNodes());
+        defer solver.deinit();
+        try solver.initial_kernelization(Graph, &graph, lower);
+    }
+
+    var n = graph.has_neighbors.cardinality();
+    var max_size = @max(5 * upper, 20);
+    std.debug.print("Adv. Subgraph size={d} of {d}\n", .{ max_size, n });
+    if (n < max_size or max_size > 64) {
+        // if the graph is too small, we solve it directly
+        // if its way too large, no chance we can solve it within the budget
+        return lower;
+    }
+
+    var scores = try std.ArrayList(u64).initCapacity(allocator, N);
+    defer scores.deinit();
+    {
+        var u: Node = 0;
+        while (u < N) : (u += 1) {
+            scores.appendAssumeCapacity(graph.deg(u));
+        }
+    }
+
+    var rng = std.rand.DefaultPrng.init(0x0273_5412_327a_8431 + @intCast(u64, n));
+    var random = rng.random();
+
+    // global scoring
+    {
+        var u: Node = 0;
+        while (u < N) : (u += 1) {
+            var iter = graph.constTwoNeighbors(u).iter_set();
+            while (iter.next()) |v| {
+                if (v >= u) {
+                    break;
+                }
+
+                var reds = graph.redNeighborsAfterMerge(u, v);
+                var redDeg = @intCast(u64, reds.cardinality());
+
+                scores.items[u] += redDeg * redDeg;
+                scores.items[v] += redDeg * redDeg;
+            }
+        }
+    }
+
+    std.debug.print("Global scoring completed", .{});
+
+    var start_time: std.time.Instant = try std.time.Instant.now();
+
+    const InducedGraph = mg.MatrixGraph(64);
+
+    var map_old_to_new = try std.ArrayList(u32).initCapacity(allocator, N);
+    defer map_old_to_new.deinit();
+    map_old_to_new.appendNTimesAssumeCapacity(InducedGraph.NumNodes, N);
+
+    var score_map = try std.ArrayList(Node).initCapacity(allocator, N);
+    defer score_map.deinit();
+    score_map.appendNTimesAssumeCapacity(InducedGraph.NumNodes, N);
+
+    var iteration: u32 = 0;
+
+    outer: while (true) {
+        var iter_start = try std.time.Instant.now();
+        if (iter_start.since(start_time) > budget_ms * 1000_000) {
+            return lower_bound;
+        }
+
+        if (lower_bound >= upper) {
+            return lower_bound;
+        }
+
+        var nodes = Graph.BitSet.new();
+        var seed = @intCast(Node, random.weightedIndex(u64, scores.items));
+        _ = nodes.setBit(seed);
+        for (map_old_to_new.items) |*x| {
+            x.* = InducedGraph.NumNodes;
+        }
+
+        map_old_to_new.items[seed] = 0;
+
+        // sample seed graph
+        for (1..10) |_| {
+            var candidates = graph.openNeighborsOfSet(&nodes);
+            if (candidates.areAllUnset()) {
+                continue :outer;
+            }
+
+            // sum total weight of candidates
+            var sum: u64 = 0;
+            {
+                var iter = candidates.iter_set();
+                while (iter.next()) |v| {
+                    sum += scores.items[v];
+                }
+            }
+
+            // sample candidate
+            {
+                var r = random.intRangeLessThan(u64, 0, sum);
+                var iter = candidates.iter_set();
+                while (iter.next()) |v| {
+                    if (r < scores.items[v]) {
+                        map_old_to_new.items[v] = nodes.cardinality();
+                        _ = nodes.setBit(v);
+                        break;
+                    }
+
+                    r -= scores.items[v];
+                }
+            }
+        }
+
+        var sub_graph = try InducedGraph.new(allocator);
+        {
+            var iter = nodes.iter_set();
+            while (iter.next()) |u| {
+                var neighs = graph.constNeighbors(u).copyWithAnd(&nodes);
+                var iter2 = neighs.iter_set();
+                var mapped_u = map_old_to_new.items[u];
+                assert(mapped_u < InducedGraph.NumNodes);
+
+                while (iter2.next()) |v| {
+                    var mapped_v = map_old_to_new.items[v];
+                    assert(mapped_v < InducedGraph.NumNodes);
+
+                    if (mapped_u < mapped_v) {
+                        _ = sub_graph.addEdge(mapped_u, mapped_v, mg.Color.Black);
+                    }
+                }
+            }
+        }
+
+        // grow graph
+        while (true) {
+            var new_node = nodes.cardinality();
+            if (new_node >= max_size) {
+                break;
+            }
+
+            var candidates = graph.openNeighborsOfSet(&nodes);
+            if (candidates.areAllUnset()) {
+                continue :outer;
+            }
+            var cand_iter = candidates.iter_set();
+
+            var num_cands: Node = 0;
+            while (cand_iter.next()) |c| {
+                var score: u64 = 0;
+
+                // copy node into into subgraph
+                {
+                    var neigh = graph.constNeighbors(c).*;
+                    neigh.assignAnd(&nodes);
+                    var neigh_iter = neigh.iter_set();
+                    while (neigh_iter.next()) |v| {
+                        var mapped_v = map_old_to_new.items[v];
+                        assert(mapped_v < InducedGraph.NumNodes);
+
+                        _ = sub_graph.addEdge(mapped_v, new_node, mg.Color.Black);
+                        score += 1;
+                    }
+                }
+
+                // score node
+                {
+                    var v: Node = 0;
+                    while (v < new_node) : (v += 1) {
+                        var redDeg = graph.redNeighborsAfterMerge(new_node, v).cardinality();
+                        score += redDeg * redDeg;
+                    }
+                }
+
+                score_map.items[num_cands] = c;
+                scores.items[num_cands] = score;
+                num_cands += 1;
+                sub_graph.removeEdgesAtNode(new_node);
+            }
+
+            // sample node
+            var u = score_map.items[random.weightedIndex(u64, scores.items[0..num_cands])];
+            _ = nodes.setBit(u);
+            map_old_to_new.items[u] = new_node;
+            {
+                var neigh = graph.constNeighbors(u).*;
+                neigh.assignAnd(&nodes);
+                var neigh_iter = neigh.iter_set();
+                while (neigh_iter.next()) |v| {
+                    var mapped_v = map_old_to_new.items[v];
+                    assert(mapped_v < InducedGraph.NumNodes);
+
+                    _ = sub_graph.addEdge(mapped_v, new_node, mg.Color.Black);
+                }
+            }
+        }
+
+        assert(nodes.cardinality() == max_size);
+        {
+            var iter = nodes.iter_set();
+            while (iter.next()) |u| {
+                var neigh = graph.constNeighbors(u).*;
+                neigh.assignAnd(&nodes);
+                var induced_deg = neigh.cardinality();
+
+                var mapped_u = map_old_to_new.items[u];
+                assert(mapped_u < InducedGraph.NumNodes);
+                var produced_deg = sub_graph.deg(mapped_u);
+                assert(produced_deg == induced_deg);
+            }
+        }
+
+        // attempt to solve graph
+        var solver = ExactBranchAndBound.new(allocator, sub_graph.has_neighbors.cardinality()) catch {
+            return lower;
+        };
+        defer solver.deinit();
+
+        solver.setLowerBound(lower_bound);
+        solver.setUpperBound(upper);
+        var budget_remaining = @max(1000, (1000 + budget_ms - iter_start.since(start_time) / 1000_000) / 10);
+        solver.setTimeout(budget_remaining);
+
+        var tww = solver.solve(InducedGraph, &sub_graph, 0) catch |e| blk: {
+            if (e == SolverError.Infeasable) {
+                std.debug.print(" Found optimal LB via adv. sugraph!\n", .{});
+                return upper;
+            }
+            break :blk lower;
+        };
+
+        if (tww > lower_bound) {
+            std.debug.print(" Found improved LB via adv. subgraph with n={d}: {d}!\n", .{ nodes.cardinality(), tww });
+        }
+
+        lower_bound = @max(lower_bound, tww);
+        iteration += 1;
+        if (iteration == 10) {
+            max_size = @min(@min(InducedGraph.NumNodes, n), max_size + 1);
+            iteration = 0;
+        }
+    }
+
+    return lower_bound;
+}
+
 pub fn findLowerBoundWithCS(comptime N: u32, graph: *const mg.MatrixGraph(N), cs: []Contraction, allocator: std.mem.Allocator, budget_ms: u64, lower: Node, upper: Node) !Node {
     const Graph = mg.MatrixGraph(N);
 
@@ -1194,6 +1469,8 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
 
     var lower = context.lower;
     if (FeatureTryLBFirst) {
+        var boost: u64 = if (graph.has_neighbors.cardinality() > 120) 20 else 1;
+
         if (BudgetHeuCSLB > 0) {
             var inner_cs = context.allocator.alloc(Contraction, cs.list.len) catch return;
             defer context.allocator.free(inner_cs);
@@ -1210,9 +1487,18 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
             }
         }
 
+        if (BudgetAdvSubgraphLB > 0) {
+            lower = findLowerBoundAdvSubgraph(@TypeOf(graph).NumNodes, &graph, context.allocator, BudgetAdvSubgraphLB * boost, context.lower, context.upper) catch context.lower;
+            assert(lower >= context.lower);
+            if (lower >= context.upper) {
+                context.result = SolverError.Infeasable;
+                return;
+            }
+        }
+
         if (BudgetSubgraphLB > 0) {
-            lower = findLowerBoundSubgraph(@TypeOf(graph).NumNodes, &graph, context.allocator, BudgetSubgraphLB, context.lower, context.upper) catch context.lower;
-            std.debug.assert(lower >= context.lower);
+            lower = findLowerBoundSubgraph(@TypeOf(graph).NumNodes, &graph, context.allocator, BudgetSubgraphLB * boost, context.lower, context.upper) catch context.lower;
+            assert(lower >= context.lower);
             if (lower >= context.upper) {
                 context.result = SolverError.Infeasable;
                 return;
@@ -1221,7 +1507,7 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
 
         if (BudgetPruningLB > 0) {
             lower = findLowerBound(@TypeOf(graph).NumNodes, &graph, context.allocator, BudgetPruningLB, context.lower, context.upper) catch context.lower;
-            std.debug.assert(lower >= context.lower);
+            assert(lower >= context.lower);
             if (lower >= context.upper) {
                 context.result = SolverError.Infeasable;
                 return;

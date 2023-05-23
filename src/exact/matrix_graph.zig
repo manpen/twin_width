@@ -4,7 +4,7 @@ const FixedSizeSet = @import("fixed_size_bitset.zig").FixedSizeSet;
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 
-const ExpensiveConsistencyChecks = false;
+pub const ExpensiveConsistencyChecks = false;
 
 pub const Color = enum {
     Black,
@@ -257,6 +257,21 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             _ = self.has_neighbors.unsetBit(u);
 
             self.assertIsConsistent();
+        }
+
+        pub fn closedNeighborsOfSet(self: *Self, nodes: *const BitSet) BitSet {
+            var result = nodes.*;
+            var iter = nodes.iter_set();
+            while (iter.next()) |v| {
+                result.assignOr(self.constNeighbors(v));
+            }
+            return result;
+        }
+
+        pub fn openNeighborsOfSet(self: *Self, nodes: *const BitSet) BitSet {
+            var result = self.closedNeighborsOfSet(nodes);
+            result.assignSub(nodes);
+            return result;
         }
 
         pub fn redNeighborsAfterMerge(self: *const Self, rem: Node, sur: Node) BitSet {

@@ -16,7 +16,7 @@ const exact_bs = @import("../exact/bootstrapping.zig");
 
 const pace_2023 = @import("../pace_2023/pace_fmt.zig");
 
-pub const GraphError = error{ FileNotFound, NotPACEFormat, GraphTooLarge, MisformedEdgeList, InvalidContractionOneNodeErased, ContractionOverflow, NoContractionLeft, NegativeNumberOfLeafes };
+pub const GraphError = error{ FileNotFound, NotPACEFormat, GraphTooLarge, MisformedEdgeList, InvalidContractionOneNodeErased, ContractionOverflow, NoContractionLeft, NegativeNumberOfLeafes, UnknownError, ExactSuboptimal };
 
 pub fn Graph(comptime T: type) type {
     comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -70,6 +70,12 @@ pub fn Graph(comptime T: type) type {
 
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
+
+        // Usually the exact tries to find a solution that is strictly better than
+        // the heuristic one (oftentimes only proving a lower bound). If set to true,
+        // we force the solver to produce a solution (by increasing the upper bound)
+        // and report an error if it fails to do so. Useful for testing.
+        force_exact_solver_to_solve: bool,
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
@@ -664,9 +670,11 @@ pub fn Graph(comptime T: type) type {
             return tww;
         }
 
-        pub fn solveExact(self: *Self) !T {
-            const ForceBnBSolution = true;
+        pub fn forceExactSolverToProduceSolution(self: *Self) void {
+            self.force_exact_solver_to_solve = true;
+        }
 
+        pub fn solveExact(self: *Self) !T {
             var org_graph = try std.ArrayList(exact_bs.MatrixGraphFromInducedSubGraph).initCapacity(self.allocator, self.connected_components.items.len);
             defer org_graph.deinit();
             defer for (org_graph.items) |*item| item.deinit();
@@ -688,7 +696,9 @@ pub fn Graph(comptime T: type) type {
             while (true) {
                 var upper_bound: u32 = 0;
                 for (self.connected_components.items) |cc| {
-                    std.debug.assert(cc.tww <= heu_tww);
+                    if (cc.tww > heu_tww) {
+                        return GraphError.ExactSuboptimal;
+                    }
                     upper_bound = @max(upper_bound, cc.tww);
                 }
 
@@ -708,10 +718,14 @@ pub fn Graph(comptime T: type) type {
                     // the exact solver treats the upper as exclusive; i.e. by setting it to the heuristic tww,
                     // we force the solver to produce a better solution or fail.
                     std.debug.print("Invoke exact solver with |CC|={d} lower={d} upper={d}\n", .{ component.subgraph.nodes.len, lower, upper_bound });
-                    var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, subgraph, lower, upper_bound + @boolToInt(ForceBnBSolution)) catch |e| {
+                    var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, subgraph, lower, upper_bound + @boolToInt(self.force_exact_solver_to_solve)) catch |e| {
                         if (e == solver_bnb.SolverError.Infeasable) {
                             std.debug.print(" ... infeasable\n", .{});
-                            std.debug.assert(!ForceBnBSolution);
+
+                            if (self.force_exact_solver_to_solve) {
+                                return GraphError.ExactSuboptimal;
+                            }
+
                             lower = @intCast(T, upper_bound);
                             break;
                         }
@@ -822,6 +836,7 @@ pub fn Graph(comptime T: type) type {
                 .started_at = try std.time.Instant.now(),
                 .last_merge_first_level_merge = false,
                 .last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
+                .force_exact_solver_to_solve = false,
             };
 
             return graph;
@@ -874,6 +889,7 @@ pub fn Graph(comptime T: type) type {
                 .started_at = try std.time.Instant.now(),
                 .last_merge_first_level_merge = false,
                 .last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
+                .force_exact_solver_to_solve = false,
             };
         }
 

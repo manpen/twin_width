@@ -94,7 +94,7 @@ pub fn InducedSubGraph(comptime T: type) type {
         }
 
         pub inline fn selectBestMoveExhaustive(self: *Self, comptime N: u32, remaining_nodes: *std.BoundedArray(T, N), current_tww: T) contraction.Contraction(T) {
-            var induced_tww = Graph(T).InducedTwinWidthPotential.default();
+            var induced_tww = Graph(T).TwwScorerSim.default();
             var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
             var min_index_erased: T = 0;
 
@@ -102,8 +102,8 @@ pub fn InducedSubGraph(comptime T: type) type {
                 for (0..first) |second| {
                     const first_node = remaining_nodes.buffer[first];
                     const second_node = remaining_nodes.buffer[second];
-                    var ind = self.graph.calculateInducedTwwPotential(first_node, second_node, &induced_tww, current_tww);
-                    if (ind.isLess(induced_tww, current_tww)) {
+                    var ind = self.graph.calculateMaxTwwScoreSim(first_node, second_node);
+                    if (ind.better(&induced_tww, current_tww)) {
                         induced_tww = ind;
                         min_contraction = .{ .erased = first_node, .survivor = second_node };
                         min_index_erased = @intCast(T, first);
@@ -735,6 +735,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 				}
 
 				pub fn solveSweepingSolverTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), budget_secs: u64, probing: bool) !T {
+						try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
             solver.scratch_bitset.unsetAll();
 						total_lvl1_contractions = 0;
             var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
@@ -852,6 +853,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 								// Reset it since it may be bad due to the sampling
 								sweeping_thresh = new_thresh;
 							}
+							std.debug.print("Contractions left {} and tww {}\n",.{contractions_left, seq.getTwinWidth()});
 						}
 						std.debug.print("Total lvl 1 contractions {}\n",.{total_lvl1_contractions});
 						return seq.getTwinWidth();
@@ -910,7 +912,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             var current_postpones: u32 = 0;
 
             // Disable exhaustive solving for now
-            const exhaustive_solving_thresh = 250;
+            const exhaustive_solving_thresh = 20_000;
 
             var enable_follow_up_merge: bool = true;
 
@@ -1033,9 +1035,9 @@ pub fn InducedSubGraph(comptime T: type) type {
                         }
                     }
 
-                    //std.debug.print("Time in bfs {} and in calculate tww {}\n",.{select_move_perf_bfs.total_time/(1000*1000),select_move_perf_calc.total_time/(1000*1000)});
                     return total_tww;
                 }
+								std.debug.print("Contractions left {} and tww {}\n",.{contractions_left,seq.getTwinWidth()});
             }
 
             return total_tww;

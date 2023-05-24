@@ -590,7 +590,11 @@ pub fn Graph(comptime T: type) type {
             // the probability of taking  this move
 
             while (red_iter.next()) |item| {
-                if (item == survivor) continue;
+                if (item == survivor) {
+                  //red_potential -= self.node_list[survivor].red_edges.cardinality();
+									//new_red_edges-=1;
+									continue;
+								}
 
                 if (!self.node_list[survivor].red_edges.contains(item)) {
                     delta_red += 1;

@@ -803,17 +803,19 @@ pub fn InducedSubGraph(comptime T: type) type {
                 var selection = try self.selectBestMove(K, P, item, solver, total_tww);
 									
 								if(selection.potential.tww <= sweeping_thresh) {
-									_ = try self.graph.addContractionNoMinHash(item,selection.target,seq);
-									if(self.graph.last_merge_first_level_merge) {
-										total_lvl1_contractions+=1;
-									}
-									contractions_left-=1;
-									if(contractions_left==0) break :outer;
+									//if(generator.next()%2 == 0) {
+										_ = try self.graph.addContractionNoMinHash(item,selection.target,seq);
+										if(self.graph.last_merge_first_level_merge) {
+											total_lvl1_contractions+=1;
+										}
+										contractions_left-=1;
+										if(contractions_left==0) break :outer;
 
-									remaining_nodes-=1;
-									solver.scratch_node_list[@intCast(u32,index)] = solver.scratch_node_list[remaining_nodes];
-									// Swap remove node
-									total_contractions += 1;
+										remaining_nodes-=1;
+										solver.scratch_node_list[@intCast(u32,index)] = solver.scratch_node_list[remaining_nodes];
+										// Swap remove node
+										total_contractions += 1;
+									//}
 								}
 								solver.node_mask_bitset.set(item);
 								solver.node_mask_bitset.set(selection.target);

@@ -671,6 +671,7 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub fn forceExactSolverToProduceSolution(self: *Self) void {
+            std.debug.print("Force exact solver to produce solution", .{});
             self.force_exact_solver_to_solve = true;
         }
 
@@ -688,7 +689,9 @@ pub fn Graph(comptime T: type) type {
             if (true) {
                 std.debug.print("Heuristic TWW: {d}\n", .{heu_tww});
                 for (self.connected_components.items) |*cc| {
-                    std.debug.print("  -> CC: n={d} tww={d}\n", .{ cc.subgraph.nodes.len, cc.tww });
+                    if (cc.subgraph.nodes.len > 10) {
+                        std.debug.print("  -> CC: n={d} tww={d}\n", .{ cc.subgraph.nodes.len, cc.tww });
+                    }
                 }
             }
 
@@ -710,7 +713,9 @@ pub fn Graph(comptime T: type) type {
                 while (cc_iter.next()) |cc| {
                     var component = &self.connected_components.items[cc.index];
                     if (component.tww < upper_bound) {
-                        std.debug.print("Skip CC for the moment n={d} tww={d} | lower={d} uppder={d}", .{ component.subgraph.nodes.len, component.tww, lower, upper_bound });
+                        if (component.subgraph.nodes.len > 10) {
+                            std.debug.print("Skip CC for the moment n={d} tww={d} | lower={d} upper={d}\n", .{ component.subgraph.nodes.len, component.tww, lower, upper_bound });
+                        }
                         continue;
                     }
                     var subgraph = &org_graph.items[cc.index];

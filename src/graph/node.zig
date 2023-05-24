@@ -78,6 +78,7 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
 
     return struct {
         const Self = @This();
+        pub const EdgeIterType = compressed_bitmap.FastCompressedBitmap(T, promote_threshold, degrade_threshold).FastCompressedBitmapIterator;
         black_edges: compressed_bitmap.FastCompressedBitmap(T, promote_threshold, degrade_threshold),
         red_edges: compressed_bitmap.FastCompressedBitmap(T, promote_threshold, degrade_threshold),
         high_degree_node: ?*LargeNodeQueryProcessor(T),
@@ -174,11 +175,11 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
             black_iter: compressed_bitmap.FastCompressedBitmap(T, promote_threshold, degrade_threshold).FastCompressedBitmapIterator,
             red: bool,
             pub inline fn next(self: *UnorderedNodeEdgeIterator) ?T {
-                while (self.black_iter.next()) |item| {
+                if (self.black_iter.next()) |item| {
                     return item;
                 }
                 self.red = true;
-                while (self.red_iter.next()) |item| {
+                if (self.red_iter.next()) |item| {
                     return item;
                 }
                 return null;

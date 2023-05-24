@@ -158,7 +158,6 @@ pub inline fn bfs(comptime T: type, start_node: T, graph: *const Graph(T), visit
 }
 
 pub inline fn bfs_topk_high_performance_inner(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, scorer: *topk.TopKScorer(T, K), comptime large_root: bool) void {
-    const own_card = graph.node_list[start_node].cardinality();
     {
         var black_iter = graph.node_list[start_node].black_edges.iterator();
         while (black_iter.next()) |item| {
@@ -174,45 +173,20 @@ pub inline fn bfs_topk_high_performance_inner(comptime T: type, comptime K: u32,
 
     const copy_frontier = scorer.write_ptr;
 
-    // Prune large degree direct neighbors
-    if (own_card > 100) {
-        var generator = std.rand.DefaultPrng.init(start_node +% own_card);
-        // Prune at most ~17% of direct neighbors for high degree nodes
-        for (scorer.node_list[0..copy_frontier]) |id| {
-            if (generator.next() > std.math.maxInt(u64) / 3) {
-                if (!large_root and graph.node_list[id].isLargeNode()) {
-                    var iter_large = graph.node_list[id].takeIterator(40);
-                    while (iter_large.next()) |item| {
-                        scorer.addVisit(item, visited.setExists(item));
-                    }
-                } else {
-                    var black_iter = graph.node_list[id].black_edges.iterator();
-                    while (black_iter.next()) |item| {
-                        scorer.addVisit(item, visited.setExists(item));
-                    }
-                    var red_iter = graph.node_list[id].red_edges.iterator();
-                    while (red_iter.next()) |item| {
-                        scorer.addVisit(item, visited.setExists(item));
-                    }
-                }
+    for (scorer.node_list[0..copy_frontier]) |id| {
+        if (!large_root and graph.node_list[id].isLargeNode()) {
+            var iter_large = graph.node_list[id].takeIterator(40);
+            while (iter_large.next()) |item| {
+                scorer.addVisit(item, visited.setExists(item));
             }
-        }
-    } else {
-        for (scorer.node_list[0..copy_frontier]) |id| {
-            if (!large_root and graph.node_list[id].isLargeNode()) {
-                var iter_large = graph.node_list[id].takeIterator(40);
-                while (iter_large.next()) |item| {
-                    scorer.addVisit(item, visited.setExists(item));
-                }
-            } else {
-                var black_iter = graph.node_list[id].black_edges.iterator();
-                while (black_iter.next()) |item| {
-                    scorer.addVisit(item, visited.setExists(item));
-                }
-                var red_iter = graph.node_list[id].red_edges.iterator();
-                while (red_iter.next()) |item| {
-                    scorer.addVisit(item, visited.setExists(item));
-                }
+        } else {
+            var black_iter = graph.node_list[id].black_edges.iterator();
+            while (black_iter.next()) |item| {
+                scorer.addVisit(item, visited.setExists(item));
+            }
+            var red_iter = graph.node_list[id].red_edges.iterator();
+            while (red_iter.next()) |item| {
+                scorer.addVisit(item, visited.setExists(item));
             }
         }
     }

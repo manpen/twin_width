@@ -133,6 +133,7 @@ pub fn Pace2023Fmt(comptime T: type) type {
             const read_size = try file.read(buffer);
 
             std.debug.assert(read_size == file_size);
+            buffer[read_size] = 0;
             return try Self.fromString(allocator, buffer);
         }
 

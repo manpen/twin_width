@@ -30,10 +30,7 @@ pub fn NodePairs(comptime T: type) type {
 
 pub fn NodeTuple(comptime T: type) type {
     _ = T;
-	return struct {
-		first: u32,
-		second: u32
-	};
+    return struct { first: u32, second: u32 };
 }
 
 pub fn ArticulationPointResources(comptime T: type) type {
@@ -86,7 +83,7 @@ pub fn SolverResources(comptime T: type, comptime K: u32, comptime P: u32) type 
         priority_queue: node_priority_queue.NodePriorityQueue(T),
 
         potential_ordered_nodes: std.PriorityQueue(NodePairs(T), T, NodePairs(T).compare),
-				node_tuple: []NodeTuple(T),
+        node_tuple: []NodeTuple(T),
 
         node_mask_bitset: bitset.FastBitSet,
         scratch_node_list: []T,
@@ -106,14 +103,11 @@ pub fn SolverResources(comptime T: type, comptime K: u32, comptime P: u32) type 
 
             var priority_queue = try node_priority_queue.NodePriorityQueue(T).init(graph, @intCast(T, P));
 
+            var potential_ordered_node = std.PriorityQueue(NodePairs(T), T, NodePairs(T).compare).init(graph.allocator, 0);
 
-						var potential_ordered_node = std.PriorityQueue(NodePairs(T), T, NodePairs(T).compare).init(graph.allocator,0);
+            try potential_ordered_node.ensureTotalCapacity(K);
 
-						try potential_ordered_node.ensureTotalCapacity(K);
-
-
-						var node_tuple = try graph.allocator.alloc(NodeTuple(T), graph.number_of_nodes);
-
+            var node_tuple = try graph.allocator.alloc(NodeTuple(T), graph.number_of_nodes);
 
             var art = try ArticulationPointResources(T).init(graph);
 
@@ -125,8 +119,8 @@ pub fn SolverResources(comptime T: type, comptime K: u32, comptime P: u32) type 
                 .scorer = scorer,
                 .priority_queue = priority_queue,
                 .articulation_point_resources = art,
-								.potential_ordered_nodes = potential_ordered_node,
-								.node_tuple = node_tuple,
+                .potential_ordered_nodes = potential_ordered_node,
+                .node_tuple = node_tuple,
             };
         }
 
@@ -135,8 +129,8 @@ pub fn SolverResources(comptime T: type, comptime K: u32, comptime P: u32) type 
             self.bfs_stack.clear();
             self.priority_queue.clear();
             self.node_mask_bitset.unsetAll();
-						self.potential_ordered_nodes.context = 0;
-						self.potential_ordered_nodes.len = 0;
+            self.potential_ordered_nodes.context = 0;
+            self.potential_ordered_nodes.len = 0;
             //Scorer does not need clearing
         }
 
@@ -148,8 +142,8 @@ pub fn SolverResources(comptime T: type, comptime K: u32, comptime P: u32) type 
             allocator.free(self.scratch_node_list);
             self.articulation_point_resources.deinit(allocator);
             self.node_mask_bitset.deinit(allocator);
-						self.potential_ordered_nodes.deinit();
-						allocator.free(self.node_tuple);
+            self.potential_ordered_nodes.deinit();
+            allocator.free(self.node_tuple);
         }
     };
 }

@@ -6,16 +6,14 @@ const empty_sigset = os.empty_sigset;
 const SIGTERM: u6 = 15;
 const BUF_SIZE = 32768;
 
-var cc_slice: [][]u32  = undefined;
+var cc_slice: [][]u32 = undefined;
 
 // Writes the current solution of cc_slice into stdout. all errors all discarded, due to callconv(.C)
 // requirement they can not be propagated as a return type (!void).
 // any better idea is appreciated.
 fn handle_sigterm(_: c_int) callconv(.C) void {
     var file = std.io.getStdOut();
-    var buffered = std.io.BufferedWriter(BUF_SIZE, @TypeOf(file.writer())){
-        .unbuffered_writer = file.writer()
-    };
+    var buffered = std.io.BufferedWriter(BUF_SIZE, @TypeOf(file.writer())){ .unbuffered_writer = file.writer() };
     var writer = buffered.writer();
 
     const n = cc_slice.len;
@@ -26,32 +24,32 @@ fn handle_sigterm(_: c_int) callconv(.C) void {
             continue;
         }
         var j: usize = 0;
-        while (j < m-1) {
-            std.fmt.format(writer,"{d} {d}\n",.{cc_slice[i][j]+1,cc_slice[i][j+1]+1}) catch {};
-            j+=2;
+        while (j < m - 1) {
+            std.fmt.format(writer, "{d} {d}\n", .{ cc_slice[i][j] + 1, cc_slice[i][j + 1] + 1 }) catch {};
+            j += 2;
         }
     }
     // each cc must be contracted with each other cc.
-    for(0..(n-1)) |i| {
+    for (0..(n - 1)) |i| {
         var j = cc_slice[i].len;
-        var k = cc_slice[i+1].len;
+        var k = cc_slice[i + 1].len;
         if (j == 0 or k == 0) {
             continue;
         }
         if (j == 1) {
-            j+=1;
+            j += 1;
         }
         if (k == 1) {
-            k+=1;
+            k += 1;
         }
-        std.fmt.format(writer,"{d} {d}\n",.{cc_slice[i+1][k-2]+1,cc_slice[i][j-2]+1}) catch {};
+        std.fmt.format(writer, "{d} {d}\n", .{ cc_slice[i + 1][k - 2] + 1, cc_slice[i][j - 2] + 1 }) catch {};
     }
     buffered.flush() catch {};
     os.exit(0);
 }
 
-const act = Sigaction {
-    .handler = .{. handler = handle_sigterm},
+const act = Sigaction{
+    .handler = .{ .handler = handle_sigterm },
     .mask = empty_sigset,
     .flags = 0,
 };
@@ -68,4 +66,3 @@ pub fn initialize_signal_handler(init_cc_slice: [][]u32) void {
     cc_slice = init_cc_slice;
     _ = sigaction(SIGTERM, &act, null);
 }
-

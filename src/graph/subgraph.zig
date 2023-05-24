@@ -14,7 +14,7 @@ const min_hash = @import("../util/min_hash.zig");
 const NodePairs = @import("solver.zig").NodePairs;
 const NodeTuple = @import("solver.zig").NodeTuple;
 
-var total_lvl1_contractions:u32 = 0;
+var total_lvl1_contractions: u32 = 0;
 
 pub const SubGraphError = error{
     SolverResourcesNotInitialized,
@@ -102,7 +102,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                 for (0..first) |second| {
                     const first_node = remaining_nodes.buffer[first];
                     const second_node = remaining_nodes.buffer[second];
-                    var ind = self.graph.calculateInducedTwwPotential(first_node, second_node,&induced_tww, current_tww);
+                    var ind = self.graph.calculateInducedTwwPotential(first_node, second_node, &induced_tww, current_tww);
                     if (ind.isLess(induced_tww, current_tww)) {
                         induced_tww = ind;
                         min_contraction = .{ .erased = first_node, .survivor = second_node };
@@ -307,95 +307,91 @@ pub fn InducedSubGraph(comptime T: type) type {
             };
         }
 
-				pub fn findOneMoveBelowUpperBound(self: *Self, bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, upper_bound: T, seed: u64, less: std.PriorityQueue()) !?contraction.Contraction(T) {
-				    _ = less;
-						var bounded_arr = try std.BoundedArray(contraction.Contraction(T),100).init(0);
+        pub fn findOneMoveBelowUpperBound(self: *Self, bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, upper_bound: T, seed: u64, less: std.PriorityQueue()) !?contraction.Contraction(T) {
+            _ = less;
+            var bounded_arr = try std.BoundedArray(contraction.Contraction(T), 100).init(0);
 
+            for (self.nodes) |node| {
+                if (self.graph.erased_nodes.get(node)) continue;
+                visited.unsetAll();
+                var bf = bfs_mod.bfs(T, node, self.graph, visited, bfs_queue, .{ .max_level = 2, .kind = .both });
+                while (bf.next()) |other_node| {
+                    if (other_node >= node) continue;
 
-				    
-						for (self.nodes) |node| {
-							if (self.graph.erased_nodes.get(node)) continue;
-							visited.unsetAll();
-							var bf = bfs_mod.bfs(T, node, self.graph, visited, bfs_queue, .{ .max_level = 2, .kind = .both });
-							while (bf.next()) |other_node| {
-								if (other_node >= node) continue;
+                    const result = self.graph.calculateInducedTww(other_node, node, null);
 
-								const result = self.graph.calculateInducedTww(other_node,node,null);
+                    if (result.tww >= upper_bound) continue;
+                    if (bounded_arr.len < 100) {
+                        try bounded_arr.append(contraction.Contraction(T){
+                            .erased = other_node,
+                            .survivor = node,
+                        });
+                    } else {
+                        break;
+                    }
+                }
+            }
 
-								if(result.tww >= upper_bound) continue;
-								if(bounded_arr.len < 100) {
-									try bounded_arr.append(contraction.Contraction(T) {
-											.erased = other_node,
-											.survivor = node,
-									});
-								}
-								else {
-									break;
-								}
-							}
-						}
+            if (bounded_arr.len == 0) return null;
 
-						if(bounded_arr.len == 0) return null;
+            var gen = std.rand.DefaultPrng.init(seed);
+            return bounded_arr.buffer[gen.next() % bounded_arr.len];
+        }
 
-						var gen = std.rand.DefaultPrng.init(seed);
-						return bounded_arr.buffer[gen.next() % bounded_arr.len];
-				}
+        pub fn solveGreedyBacktrackToLastIncrease(self: *Self, best_contraction_seq: *contraction.ContractionSequence(T), bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, seq: *retraceable_contraction.RetraceableContractionSequence(T), upper_bound: T) !T {
+            var check = best_contraction_seq.iterator();
+            while (check.next()) |item| {
+                _ = try self.graph.addContraction(item.erased, item.survivor, seq);
+            }
 
-				pub fn solveGreedyBacktrackToLastIncrease(self: *Self, best_contraction_seq: *contraction.ContractionSequence(T),bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, seq: *retraceable_contraction.RetraceableContractionSequence(T), upper_bound: T) !T {
-					var check = best_contraction_seq.iterator();
-					while(check.next()) |item| {
-						_ = try self.graph.addContraction(item.erased,item.survivor,seq);
-					}
-					
-					// Ok we have the best known current sequence
-					var current_tww: T = seq.getTwinWidth();
+            // Ok we have the best known current sequence
+            var current_tww: T = seq.getTwinWidth();
 
-					var current_level = self.nodes.len;
-					while(seq.lastContraction()) |_| {
-						try self.graph.revertLastContraction(seq);
-						current_level-=1;
-						if(seq.getTwinWidth() != current_tww) {
-							break;
-						}
-					}
+            var current_level = self.nodes.len;
+            while (seq.lastContraction()) |_| {
+                try self.graph.revertLastContraction(seq);
+                current_level -= 1;
+                if (seq.getTwinWidth() != current_tww) {
+                    break;
+                }
+            }
 
-					var seed:u64 = 17;
+            var seed: u64 = 17;
 
-					var max_backtracks:u32 = 10000;
-					var generator = std.rand.DefaultPrng.init(seed);
+            var max_backtracks: u32 = 10000;
+            var generator = std.rand.DefaultPrng.init(seed);
 
-					// Here is somewehere another error
-					while(!seq.isComplete()) {
-						seed+=17;
-						var move = try self.findOneMoveBelowUpperBound(bfs_queue,visited,upper_bound, seed);
-						if(move == null) {
-							max_backtracks-=1;
-							if(max_backtracks == 0) return std.math.maxInt(T);
+            // Here is somewehere another error
+            while (!seq.isComplete()) {
+                seed += 17;
+                var move = try self.findOneMoveBelowUpperBound(bfs_queue, visited, upper_bound, seed);
+                if (move == null) {
+                    max_backtracks -= 1;
+                    if (max_backtracks == 0) return std.math.maxInt(T);
 
-							while(seq.lastContraction()) |_| {
-								if(generator.next()%4 != 0) {
-									try self.graph.revertLastContraction(seq);
-								}
-								else {
-									break;
-								}
-							}
-							continue;
-						}
+                    while (seq.lastContraction()) |_| {
+                        if (generator.next() % 4 != 0) {
+                            try self.graph.revertLastContraction(seq);
+                        } else {
+                            break;
+                        }
+                    }
+                    continue;
+                }
 
-						_ = try self.graph.addContraction(move.?.erased, move.?.survivor, seq);
-						current_level+=1;
-					}
+                _ = try self.graph.addContraction(move.?.erased, move.?.survivor, seq);
+                current_level += 1;
+            }
 
-					return seq.getTwinWidth();
-				}
+            return seq.getTwinWidth();
+        }
 
         pub fn solveGreedyConstraint(self: *Self, bfs_queue: *bfs_mod.BfsQueue(T), visited: *bitset.FastBitSet, seq: *retraceable_contraction.RetraceableContractionSequence(T), upper_bound: T) !T {
             var constraints = std.AutoHashMap(T, T).init(self.graph.allocator);
 
             var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
 
-            var total_max_reverts:u32 = 1_000;
+            var total_max_reverts: u32 = 1_000;
 
             while (contractions_left > 0) {
                 var total_nodes_checked: u32 = 0;
@@ -446,21 +442,21 @@ pub fn InducedSubGraph(comptime T: type) type {
                 if (total_nodes_checked == 0) {
                     total_max_reverts -= 1;
                     if (total_max_reverts == 0) return std.math.maxInt(T);
-										constraints.clearRetainingCapacity();
+                    constraints.clearRetainingCapacity();
 
                     for (self.nodes) |current_node| {
                         if (self.graph.erased_nodes.get(current_node)) continue;
-												if(self.graph.node_list[current_node].red_edges.cardinality() == upper_bound-1) {
-													try constraints.put(current_node,upper_bound-1);
-													break;
-												}
+                        if (self.graph.node_list[current_node].red_edges.cardinality() == upper_bound - 1) {
+                            try constraints.put(current_node, upper_bound - 1);
+                            break;
+                        }
                     }
 
                     while (seq.lastContraction()) |_| {
                         try self.graph.revertLastContraction(seq);
                     }
-            				contractions_left = @intCast(u32, self.nodes.len - 1);
-										continue;
+                    contractions_left = @intCast(u32, self.nodes.len - 1);
+                    continue;
                 }
 
                 _ = try self.graph.addContraction(min_contraction.erased, min_contraction.survivor, seq);
@@ -589,7 +585,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Hard graphs exact 6,14,18,32,38
 
             var upper_bound_set = upper_bound orelse std.math.maxInt(T);
-						if(upper_bound_set == 0) return std.math.maxInt(T);
+            if (upper_bound_set == 0) return std.math.maxInt(T);
             ctx.setUpperBound(upper_bound_set - 1);
             ctx_score.setUpperBound(upper_bound_set - 1);
 
@@ -626,246 +622,232 @@ pub fn InducedSubGraph(comptime T: type) type {
             return seq.getTwinWidth();
         }
 
-				pub const TwinWidthPriorityWithContraction = struct {
-					tww: T,
-					pub fn compare(ctx: void, lhs: TwinWidthPriorityWithContraction, rhs: TwinWidthPriorityWithContraction) std.math.Order {
-					    _ = ctx;
-						return std.math.order(rhs.tww,lhs.tww);
-					}
-				};
+        pub const TwinWidthPriorityWithContraction = struct {
+            tww: T,
+            pub fn compare(ctx: void, lhs: TwinWidthPriorityWithContraction, rhs: TwinWidthPriorityWithContraction) std.math.Order {
+                _ = ctx;
+                return std.math.order(rhs.tww, lhs.tww);
+            }
+        };
 
-				pub fn solveFoldingSingleNode(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
-				    
+        pub fn solveFoldingSingleNode(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
             var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
             if (contractions_left == 0) return 0;
 
-						var generator = std.rand.DefaultPrng.init(23);
-						min_hash.fisher_yates_shuffle(T,self.nodes[0..self.nodes.len], &generator);
-						
-						var min_node:T = 0;
-						var min_tww:T = std.math.maxInt(T);
+            var generator = std.rand.DefaultPrng.init(23);
+            min_hash.fisher_yates_shuffle(T, self.nodes[0..self.nodes.len], &generator);
 
+            var min_node: T = 0;
+            var min_tww: T = std.math.maxInt(T);
 
-						for(0..std.math.min(self.nodes.len,1000)) |i| {
-							const item = self.nodes[i];
+            for (0..std.math.min(self.nodes.len, 1000)) |i| {
+                const item = self.nodes[i];
 
-              solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
 
-							// Select greedy
-              var selection = try self.selectBestMove(K, P, item, solver, 0);
-							if(selection.potential.tww < min_tww) {
-								min_node = item;
-								min_tww = selection.potential.tww;
-							}
-						}
+                // Select greedy
+                var selection = try self.selectBestMove(K, P, item, solver, 0);
+                if (selection.potential.tww < min_tww) {
+                    min_node = item;
+                    min_tww = selection.potential.tww;
+                }
+            }
 
-						while(contractions_left > 0) {
-              solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+            while (contractions_left > 0) {
+                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
 
-							// Select greedy
-              var selection = try self.selectBestMove(K, P, min_node, solver, 0);
-							_ = try self.graph.addContraction(selection.target, min_node, seq);
-							contractions_left-=1;
-							std.debug.print("Folding contractions left {} tww {}\n",.{contractions_left, seq.getTwinWidth()});
-						}
+                // Select greedy
+                var selection = try self.selectBestMove(K, P, min_node, solver, 0);
+                _ = try self.graph.addContraction(selection.target, min_node, seq);
+                contractions_left -= 1;
+                std.debug.print("Folding contractions left {} tww {}\n", .{ contractions_left, seq.getTwinWidth() });
+            }
 
-						return seq.getTwinWidth();
+            return seq.getTwinWidth();
+        }
 
-				}
-
-
-				pub fn solveMinHash(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
+        pub fn solveMinHash(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
             solver.scratch_bitset.unsetAll();
             var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
-						var diff_nodes = std.AutoHashMap(u32,u32).init(self.graph.allocator);
-						//try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
+            var diff_nodes = std.AutoHashMap(u32, u32).init(self.graph.allocator);
+            //try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
 
             if (contractions_left == 0) return 0;
             var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
             while (contractions_left > 0) {
-								//try self.graph.min_hash.fetchNextMoves(120,self.graph);
+                //try self.graph.min_hash.fetchNextMoves(120,self.graph);
 
-								var potential = Graph(T).InducedTwinWidthPotential.default();
+                var potential = Graph(T).InducedTwinWidthPotential.default();
 
-								var min_mv:u32 = std.math.maxInt(u32);
-								var max_mv:u32 = 0;
-								diff_nodes.clearRetainingCapacity();
-								var def = Graph(T).InducedTwinWidthPotential.default();
+                var min_mv: u32 = std.math.maxInt(u32);
+                var max_mv: u32 = 0;
+                diff_nodes.clearRetainingCapacity();
+                var def = Graph(T).InducedTwinWidthPotential.default();
 
-								var moves = try std.BoundedArray(min_hash.MinHashEntry,10_000).init(0);
-								try self.graph.min_hash.getNextKMoves(10_000, &moves,self.graph);
-								var direct_score:T = std.math.maxInt(T);
-								for(0..moves.len) |mv_index| {
-									const mv = moves.buffer[mv_index];
+                var moves = try std.BoundedArray(min_hash.MinHashEntry, 10_000).init(0);
+                try self.graph.min_hash.getNextKMoves(10_000, &moves, self.graph);
+                var direct_score: T = std.math.maxInt(T);
+                for (0..moves.len) |mv_index| {
+                    const mv = moves.buffer[mv_index];
 
-									const move = mv.intoMove(T,self.graph.number_of_nodes);
-									var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&def, seq.getTwinWidth());
-									var direct_score_mv = self.graph.calculateTwwOfMergeSurvivor(move.erased,move.survivor);
-									if(diff_nodes.getPtr(move.erased)) |er| {
-										er.* += 1;
-										max_mv = std.math.max(max_mv,er.*);
-									}
-									else {
-										try diff_nodes.put(move.erased,1);
-									}
-									if(diff_nodes.getPtr(move.survivor)) |sr| {
-										sr.* += 1;
-										max_mv = std.math.max(max_mv,sr.*);
-									}
-									else {
-										try diff_nodes.put(move.survivor,1);
-									}
-									min_mv = std.math.min(min_mv,global_score.tww);
-									if(direct_score_mv < direct_score) {
-										min_contraction = move;
-										potential = global_score;
-										direct_score = direct_score_mv;
-									}
-								}
+                    const move = mv.intoMove(T, self.graph.number_of_nodes);
+                    var global_score = self.graph.calculateInducedTwwPotential(move.erased, move.survivor, &def, seq.getTwinWidth());
+                    var direct_score_mv = self.graph.calculateTwwOfMergeSurvivor(move.erased, move.survivor);
+                    if (diff_nodes.getPtr(move.erased)) |er| {
+                        er.* += 1;
+                        max_mv = std.math.max(max_mv, er.*);
+                    } else {
+                        try diff_nodes.put(move.erased, 1);
+                    }
+                    if (diff_nodes.getPtr(move.survivor)) |sr| {
+                        sr.* += 1;
+                        max_mv = std.math.max(max_mv, sr.*);
+                    } else {
+                        try diff_nodes.put(move.survivor, 1);
+                    }
+                    min_mv = std.math.min(min_mv, global_score.tww);
+                    if (direct_score_mv < direct_score) {
+                        min_contraction = move;
+                        potential = global_score;
+                        direct_score = direct_score_mv;
+                    }
+                }
 
-								_ = self.graph.addContraction(min_contraction.erased,min_contraction.survivor,seq) catch |err| {
-									std.debug.print("Contractions left {} tww {}\n",.{contractions_left, seq.getTwinWidth()});
-									return err;
-								};
-								try self.graph.min_hash.reinsertKMoves(10_000, &moves, self.graph);
-								contractions_left-=1;
-						}
-						return seq.getTwinWidth();
-				}
+                _ = self.graph.addContraction(min_contraction.erased, min_contraction.survivor, seq) catch |err| {
+                    std.debug.print("Contractions left {} tww {}\n", .{ contractions_left, seq.getTwinWidth() });
+                    return err;
+                };
+                try self.graph.min_hash.reinsertKMoves(10_000, &moves, self.graph);
+                contractions_left -= 1;
+            }
+            return seq.getTwinWidth();
+        }
 
-				pub fn solveSweepingSolverTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), budget_secs: u64, probing: bool) !T {
-						//try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
+        pub fn solveSweepingSolverTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), budget_secs: u64, probing: bool) !T {
+            //try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
             solver.scratch_bitset.unsetAll();
-						total_lvl1_contractions = 0;
+            total_lvl1_contractions = 0;
             var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
             if (contractions_left == 0) return 0;
             var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
             _ = min_contraction;
-						// Should be zero which leads in the best move selection to always greedily choose the better twin width rather than the better potential
+            // Should be zero which leads in the best move selection to always greedily choose the better twin width rather than the better potential
             var total_tww: T = seq.getTwinWidth();
-						
-						var start_time = try std.time.Instant.now();
-            
-						
 
-						var priority_queue = std.PriorityQueue(TwinWidthPriorityWithContraction,void,TwinWidthPriorityWithContraction.compare).init(self.graph.allocator,{});
-						defer priority_queue.deinit();
+            var start_time = try std.time.Instant.now();
 
-						// This is an overestimation can be cut down to N/(2*log(N))
-						try priority_queue.ensureTotalCapacity(self.nodes.len);
+            var priority_queue = std.PriorityQueue(TwinWidthPriorityWithContraction, void, TwinWidthPriorityWithContraction.compare).init(self.graph.allocator, {});
+            defer priority_queue.deinit();
 
-						//try self.reduceLeafesAndPaths(K,P,seq,solver,false);
-						var remaining_nodes:T = 0;
-						for(self.nodes) |n| {
-							if(self.graph.erased_nodes.get(n)) @panic("Should never happen!");
-							solver.scratch_node_list[remaining_nodes] = n;
-							remaining_nodes+=1;
-						}
-						
-						var sweeping_thresh:u32 = 0;
+            // This is an overestimation can be cut down to N/(2*log(N))
+            try priority_queue.ensureTotalCapacity(self.nodes.len);
 
-						var generator = std.rand.DefaultPrng.init(19);
-						//heuristic_128.gr
+            //try self.reduceLeafesAndPaths(K,P,seq,solver,false);
+            var remaining_nodes: T = 0;
+            for (self.nodes) |n| {
+                if (self.graph.erased_nodes.get(n)) @panic("Should never happen!");
+                solver.scratch_node_list[remaining_nodes] = n;
+                remaining_nodes += 1;
+            }
 
-						
-						var first_iteration: bool = true;
+            var sweeping_thresh: u32 = 0;
+
+            var generator = std.rand.DefaultPrng.init(19);
+            //heuristic_128.gr
+
+            var first_iteration: bool = true;
             outer: while (contractions_left > 0) {
-							priority_queue.len = 0;
-							var total_contractions:u32 = 0;
-							solver.node_mask_bitset.unsetAll();
+                priority_queue.len = 0;
+                var total_contractions: u32 = 0;
+                solver.node_mask_bitset.unsetAll();
 
+                const remaining_nodes_before = remaining_nodes;
+                _ = remaining_nodes_before;
 
-							const remaining_nodes_before = remaining_nodes;
-							_ = remaining_nodes_before;
+                var sqrt: u32 = 1;
 
-							var sqrt:u32 = 1;
+                var sample_amount = 2 * sqrt;
+                if (sample_amount > 200000000) {
+                    min_hash.fisher_yates_sample_first_n(T, solver.scratch_node_list[0..remaining_nodes], sample_amount, &generator);
+                } else {
+                    sample_amount = remaining_nodes + 1;
+                }
 
-							var sample_amount = 2*sqrt;
-							if(sample_amount > 200000000) {
-								min_hash.fisher_yates_sample_first_n(T, solver.scratch_node_list[0..remaining_nodes], sample_amount, &generator);
-							}
-							else {
-								sample_amount = remaining_nodes+1;
-							}
+                var min_tww: T = std.math.maxInt(T);
+                var max_tww: T = 0;
+                var cumulative_tww: u64 = 0;
+                var visited: u32 = 0;
 
-							var min_tww: T = std.math.maxInt(T);
-							var max_tww:T = 0;
-							var cumulative_tww:u64 = 0;
-							var visited:u32 = 0;
+                // Need overflow
+                var index: i32 = 0;
+                while (index < remaining_nodes) : (index += 1) {
+                    const item = solver.scratch_node_list[@intCast(u32, index)];
+                    if (solver.node_mask_bitset.get(item) and self.nodes.len > 10000) continue;
+                    if (self.graph.erased_nodes.get(item)) @panic("Should never happen!");
+                    solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+                    var selection = try self.selectBestMove(K, P, item, solver, total_tww);
 
-							// Need overflow
-							var index:i32 = 0;
-							while (index < remaining_nodes): (index+=1) {
-								const item = solver.scratch_node_list[@intCast(u32,index)];
-								if(solver.node_mask_bitset.get(item) and self.nodes.len > 10000) continue;
-								if(self.graph.erased_nodes.get(item)) @panic("Should never happen!");
-                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-                var selection = try self.selectBestMove(K, P, item, solver, total_tww);
-									
-								if(selection.potential.tww <= sweeping_thresh) {
-									//if(generator.next()%2 == 0) {
-										_ = try self.graph.addContractionNoMinHash(item,selection.target,seq);
-										if(self.graph.last_merge_first_level_merge) {
-											total_lvl1_contractions+=1;
-										}
-										contractions_left-=1;
-										if(contractions_left==0) break :outer;
+                    if (selection.potential.tww <= sweeping_thresh) {
+                        //if(generator.next()%2 == 0) {
+                        _ = try self.graph.addContractionNoMinHash(item, selection.target, seq);
+                        if (self.graph.last_merge_first_level_merge) {
+                            total_lvl1_contractions += 1;
+                        }
+                        contractions_left -= 1;
+                        if (contractions_left == 0) break :outer;
 
-										remaining_nodes-=1;
-										solver.scratch_node_list[@intCast(u32,index)] = solver.scratch_node_list[remaining_nodes];
-										// Swap remove node
-										total_contractions += 1;
-									//}
-								}
-								solver.node_mask_bitset.set(item);
-								solver.node_mask_bitset.set(selection.target);
-								min_tww = std.math.min(min_tww,selection.potential.tww);
-								max_tww = std.math.max(max_tww,selection.potential.tww);
-								cumulative_tww += selection.potential.tww;
-								visited+=1;
-								if(priority_queue.count() < sqrt) {
-									try priority_queue.add(TwinWidthPriorityWithContraction {
-											.tww = selection.potential.tww,
-											});
-								}
-								else if(priority_queue.peek().?.tww > selection.potential.tww) {
-									try priority_queue.update(priority_queue.peek().?, TwinWidthPriorityWithContraction {
-											.tww = selection.potential.tww,
-											});
-								}
+                        remaining_nodes -= 1;
+                        solver.scratch_node_list[@intCast(u32, index)] = solver.scratch_node_list[remaining_nodes];
+                        // Swap remove node
+                        total_contractions += 1;
+                        //}
+                    }
+                    solver.node_mask_bitset.set(item);
+                    solver.node_mask_bitset.set(selection.target);
+                    min_tww = std.math.min(min_tww, selection.potential.tww);
+                    max_tww = std.math.max(max_tww, selection.potential.tww);
+                    cumulative_tww += selection.potential.tww;
+                    visited += 1;
+                    if (priority_queue.count() < sqrt) {
+                        try priority_queue.add(TwinWidthPriorityWithContraction{
+                            .tww = selection.potential.tww,
+                        });
+                    } else if (priority_queue.peek().?.tww > selection.potential.tww) {
+                        try priority_queue.update(priority_queue.peek().?, TwinWidthPriorityWithContraction{
+                            .tww = selection.potential.tww,
+                        });
+                    }
 
-								if(index == sample_amount) {
-									sweeping_thresh = std.math.max(sweeping_thresh,min_tww);
-									if(first_iteration) {
-										if(probing and (((cumulative_tww/visited) > 50) or max_tww > 50)) return std.math.maxInt(T);
-									}
-								}
+                    if (index == sample_amount) {
+                        sweeping_thresh = std.math.max(sweeping_thresh, min_tww);
+                        if (first_iteration) {
+                            if (probing and (((cumulative_tww / visited) > 50) or max_tww > 50)) return std.math.maxInt(T);
+                        }
+                    }
 
-								if(index&0x800 > 0) {
-									var time = try std.time.Instant.now();
-									if(time.since(start_time)/(1000*1000*1000) > budget_secs) {
-										return std.math.maxInt(T);	
-									}
-								}
-							}
-							first_iteration = false;
+                    if (index & 0x800 > 0) {
+                        var time = try std.time.Instant.now();
+                        if (time.since(start_time) / (1000 * 1000 * 1000) > budget_secs) {
+                            return std.math.maxInt(T);
+                        }
+                    }
+                }
+                first_iteration = false;
 
-							
-							if(total_contractions < sqrt) {
-								var new_thresh:u32 = priority_queue.peek().?.tww;
-								// Reset it since it may be bad due to the sampling
-								sweeping_thresh = new_thresh;
-							}
-						}
-						return seq.getTwinWidth();
-				}
+                if (total_contractions < sqrt) {
+                    var new_thresh: u32 = priority_queue.peek().?.tww;
+                    // Reset it since it may be bad due to the sampling
+                    sweeping_thresh = new_thresh;
+                }
+            }
+            return seq.getTwinWidth();
+        }
 
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), find_articulation_points: bool) !T {
             _ = find_articulation_points;
             // Use once at the beginning later we will only consider merges which involve the survivor of the last merge
             // Paths might be dangerous
             try self.reduceLeafesAndPaths(K, P, seq, solver, true);
-
 
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();
@@ -941,41 +923,40 @@ pub fn InducedSubGraph(comptime T: type) type {
                     min_contraction = contraction.Contraction(T){ .survivor = first_node, .erased = selection.target };
                 }
 
-								//var moves = try std.BoundedArray(min_hash.MinHashEntry,3*K).init(0);
+                //var moves = try std.BoundedArray(min_hash.MinHashEntry,3*K).init(0);
 
-								//try self.graph.min_hash.getNextKMoves(3*K, &moves,self.graph);
-								//var def = Graph(T).InducedTwinWidthPotential.default();
-								//var min_direct_score = self.graph.calculateTwwOfMergeSurvivor(min_contraction.erased,min_contraction.survivor);
-								//for(0..moves.len) |mv_index| {
-								//	const mv = moves.buffer[mv_index];
+                //try self.graph.min_hash.getNextKMoves(3*K, &moves,self.graph);
+                //var def = Graph(T).InducedTwinWidthPotential.default();
+                //var min_direct_score = self.graph.calculateTwwOfMergeSurvivor(min_contraction.erased,min_contraction.survivor);
+                //for(0..moves.len) |mv_index| {
+                //	const mv = moves.buffer[mv_index];
 
-								//	const move = mv.intoMove(T,self.graph.number_of_nodes);
-								//	var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&def, seq.getTwinWidth());
-								//	var direct_score = self.graph.calculateTwwOfMergeSurvivor(move.erased,move.survivor);
-								//	if(global_score.isLess(selection.potential,seq.getTwinWidth())) {
-								//		min_contraction = move;
-								//		selection.potential = global_score;
-								//		min_direct_score = direct_score;
-								//	}
-								//}
-								//try self.graph.min_hash.reinsertFetchedMoves();
+                //	const move = mv.intoMove(T,self.graph.number_of_nodes);
+                //	var global_score = self.graph.calculateInducedTwwPotential(move.erased,move.survivor,&def, seq.getTwinWidth());
+                //	var direct_score = self.graph.calculateTwwOfMergeSurvivor(move.erased,move.survivor);
+                //	if(global_score.isLess(selection.potential,seq.getTwinWidth())) {
+                //		min_contraction = move;
+                //		selection.potential = global_score;
+                //		min_direct_score = direct_score;
+                //	}
+                //}
+                //try self.graph.min_hash.reinsertFetchedMoves();
 
                 // Reset all variables which were set to select the best postponed move
 
-								//if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
-								//	const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
-								//	if(t.isLess(selection.potential,seq.getTwinWidth())) {
-								//		min_contraction = best;
-								//	}
-								//}
+                //if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
+                //	const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
+                //	if(t.isLess(selection.potential,seq.getTwinWidth())) {
+                //		min_contraction = best;
+                //	}
+                //}
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
 
                 const contractions_left_copy = contractions_left;
 
-
                 total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge, seq, min_contraction, &contractions_left), total_tww);
-								//try self.graph.min_hash.reinsertKMoves(3*K,&moves, self.graph);
+                //try self.graph.min_hash.reinsertKMoves(3*K,&moves, self.graph);
 
                 solver.priority_queue.addTick(@intCast(T, contractions_left_copy - contractions_left));
 
@@ -1034,7 +1015,7 @@ pub fn InducedSubGraph(comptime T: type) type {
 
                     return total_tww;
                 }
-								//std.debug.print("Contractions left {} and tww {}\n",.{contractions_left,seq.getTwinWidth()});
+                //std.debug.print("Contractions left {} and tww {}\n",.{contractions_left,seq.getTwinWidth()});
             }
 
             return total_tww;

@@ -414,7 +414,7 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                 return;
             }
 
-            var num_edges: u32 = 0;
+            var degree_sum: u32 = 0;
             var u: Node = 0;
 
             while (u < self.numberOfNodes()) : (u += 1) {
@@ -429,7 +429,7 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                     }
                 }
 
-                num_edges += self.constNeighbors(u).cardinality();
+                degree_sum += self.constNeighbors(u).cardinality();
 
                 assert(self.has_neighbors.isSet(u) == (self.deg(u) > 0));
 
@@ -455,6 +455,9 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
                     }
                 }
             }
+
+            assert(degree_sum % 2 == 0);
+            assert(2 * self.num_edges == degree_sum);
         }
 
         fn setColumn(self: *Self, comptime rowType: RowType, column: u32, iter: anytype) void {
@@ -594,22 +597,29 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
 
             var u: u32 = 0;
             var degreeSum: u32 = 0;
+
+            var new_hash_neighbors = self.has_neighbors;
+
             while (u < NumNodes) : (u += 1) {
                 if (!self.has_neighbors.isSet(u)) {
                     continue;
                 }
 
+                assert(self.constNeighbors(u).is_subset_of(&self.has_neighbors));
                 self.neighbors(u).assignXor(&self.has_neighbors);
                 self.neighbors(u).assignOr(self.constRedNeighbors(u));
+                _ = self.neighbors(u).unsetBit(u);
 
                 var d = self.deg(u);
 
                 if (d == 0) {
-                    _ = self.has_neighbors.unsetBit(u);
+                    _ = new_hash_neighbors.unsetBit(u);
                 }
 
                 degreeSum += d;
             }
+
+            self.has_neighbors = new_hash_neighbors;
 
             self.num_edges = degreeSum / 2;
 

@@ -58,6 +58,7 @@ const FeatureLeafNodePruning: bool = FeaturePruning and true;
 const FeatureTwinPruning: bool = FeaturePruning and true;
 const FeatureTinyGraphBelowSlack: bool = FeaturePruning and true; // almost no effect, as it only helps, if we're about to find a solution
 const FeaturePruneTinyRedBridges: bool = FeaturePruning and true;
+const FeaturePruneGeneralizedTwins: bool = FeaturePruning and true;
 
 const FeatureComplements: bool = false; // BROKEN
 const FeatureOuterPathPruning: bool = FeaturePruning and true; // BROKEN
@@ -102,6 +103,7 @@ pub const ExactBranchAndBound = struct {
 
     lower_bound_mode: bool,
     rng: ?*std.rand.DefaultPrng,
+    silent: bool,
 
     pub fn new(allocator: std.mem.Allocator, number_of_nodes: Node) !Self {
         assert(number_of_nodes > 0);
@@ -147,6 +149,7 @@ pub const ExactBranchAndBound = struct {
             .timeout_ms = null,
             .lower_bound_mode = false,
             .rng = null,
+            .silent = false,
         };
 
         return solver;
@@ -389,7 +392,9 @@ pub const ExactBranchAndBound = struct {
 
         assert(self.working_seq.items.len == 0);
 
-        std.debug.print("Before Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
+        if (!self.silent) {
+            std.debug.print("Before Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
+        }
 
         while (true) {
             _ = try self.pruneLeafs(Graph, graph);
@@ -404,7 +409,9 @@ pub const ExactBranchAndBound = struct {
             assert(graph.deg(ctr.rem) == 0);
         }
 
-        std.debug.print("After Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
+        if (!self.silent) {
+            std.debug.print("After Kernel: n={d} m={d}\n", .{ graph.has_neighbors.cardinality(), graph.numberOfEdges() });
+        }
     }
 
     noinline fn pruneTwins(
@@ -615,7 +622,7 @@ fn Frame(comptime Graph: type) type {
                 };
 
                 if (FeatureComplements and (Graph.NumNodes > 8 and self.work_graph.numEdgesInComplement() * 5 < self.work_graph.numberOfEdges() * 4)) {
-                    std.debug.print("Complement!", .{});
+                    // std.debug.print("Complement!\n", .{});
                     self.work_graph.complement();
                 }
 
@@ -670,6 +677,10 @@ fn Frame(comptime Graph: type) type {
                 _ = try self.pruneLeafsAt(sur);
 
                 if (try self.pruneTwinsAt(sur)) {
+                    continue;
+                }
+
+                if (try self.pruneGeneralizedTwinsAt(sur)) {
                     continue;
                 }
 
@@ -973,7 +984,7 @@ fn Frame(comptime Graph: type) type {
         }
 
         noinline fn pruneTwinsAt(self: *Self, u: Node) anyerror!bool {
-            if (!FeatureTwinPruning) {
+            if (!FeatureTwinPruning or FeaturePruneGeneralizedTwins) {
                 return false;
             }
 
@@ -994,6 +1005,44 @@ fn Frame(comptime Graph: type) type {
                         try self.contractNodes(v, w);
                         return true;
                     }
+                }
+            }
+
+            return false;
+        }
+
+        noinline fn pruneGeneralizedTwinsAt(self: *Self, u: Node) anyerror!bool {
+            if (!FeaturePruneGeneralizedTwins) {
+                return false;
+            }
+
+            var two_neighbors = self.work_graph.constTwoNeighbors(u);
+            if (two_neighbors.cardinality() > 100) {
+                return false;
+            }
+
+            var it1 = two_neighbors.iter_set();
+            while (it1.next()) |v| {
+                var it2 = it1;
+                var red_deg_v = self.work_graph.redDeg(v);
+                while (it2.next()) |w| {
+                    var red = self.work_graph.redNeighborsAfterMerge(v, w);
+
+                    var red_card = red.cardinality();
+                    if (red_card > red_deg_v or red_card > self.work_graph.redDeg(w)) {
+                        continue;
+                    }
+
+                    red.assignSub(self.work_graph.constRedNeighbors(v));
+                    red.assignSub(self.work_graph.constRedNeighbors(w));
+
+                    if (!red.areAllUnset()) {
+                        continue;
+                    }
+
+                    //std.debug.print("Gen twin be gone {d} -> {d}\n", .{ v, w });
+                    try self.contractNodes(v, w);
+                    return true;
                 }
             }
 
@@ -1366,7 +1415,7 @@ pub fn findLowerBoundAdvSubgraph(comptime N: u32, input_graph: *const mg.MatrixG
         var budget_remaining = @max(1000, (1000 + budget_ms - iter_start.since(start_time) / 1000_000) / 10);
         solver.setTimeout(budget_remaining);
 
-        var tww = solver.solve(InducedGraph, &sub_graph, 0) catch |e| blk: {
+        var tww = solver.solve(InducedGraph, &sub_graph, upper - 2) catch |e| blk: {
             if (e == SolverError.Infeasable) {
                 std.debug.print(" Found optimal LB via adv. sugraph!\n", .{});
                 return upper;

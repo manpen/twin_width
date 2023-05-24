@@ -201,7 +201,7 @@ pub fn NodeScorerNewReds(comptime T: type) type {
         }
 
         pub fn map(ctx: *@This(), first: T, second: T, graph: *Graph(T)) ?MapType {
-            const result = graph.calculateMaxTwwOfNewNeighbors(first, second);
+            const result = graph.calculateMaxTwwOfNewNeighbors(first, second).@"0";
             if (result > ctx.upper_bound) return null;
             return NodePriorityType{ .survivor = second, .erased = first, .merge_tww = result};
         }

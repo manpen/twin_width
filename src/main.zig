@@ -17,9 +17,13 @@ const builtin = @import("builtin");
 
 pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, filename: []const u8, short_name: []const u8) !T {
 	var timer = try std.time.Instant.now();
-	var pace_part = try pace.Pace2023Fmt(T).fromFile(allocator,filename);
+	var pace_part = pace.Pace2023Fmt(T).fromFile(allocator,filename) catch |err| {
+		std.debug.print("Error load from file {}\n",.{err});
+		return err;
+	};
 	var loaded_graph = graph.Graph(T).loadFromPace(allocator,&pace_part) catch |err| {
 			//Print error message if the graph could not be loaded std.debug.print("Could not load graph: {}", .{err});
+		std.debug.print("Error load graph {}\n",.{err});
 			return err;
 	};
 	defer loaded_graph.deinit();
@@ -48,7 +52,10 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
 }
 
 pub fn initial_solver(allocator: std.mem.Allocator, filename: []const u8, short_name: []const u8) !u32 {
-	var problem_size = try pace.loadPaceProblemHeaderFromFile(filename);
+	var problem_size = pace.loadPaceProblemHeaderFromFile(filename) catch |err| {
+		std.debug.print("Error {}\n",.{err});
+		@panic("Caught error!");
+	};
 	if(problem_size.nodes <= std.math.maxInt(u8)) {
 		return try inner_initial_solver(u8, allocator, filename, short_name);
 	}
@@ -79,7 +86,7 @@ pub fn main() !void {
 		var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 		defer _ = gpa.deinit();
 
-		const target_directory = "instances/heuristic-public";
+		const target_directory = "instances/exact-public";
 
 		var allocator = gpa.allocator();
 		std.debug.print("{s:<25} | {s:>8} | {s:>8} | {s:>8} | {s:>6}\n",.{"filename","nodes","edges","tww","time (ms)"});
@@ -89,7 +96,7 @@ pub fn main() !void {
 		var dirit = dirIter.iterate();
 
 
-		var large_buffer = try allocator.alloc(u8,1024*1024*3000);
+		var large_buffer = try allocator.alloc(u8,1024*1024*6000);
 		defer allocator.free(large_buffer);
 
 		var hpa_allocator = std.heap.FixedBufferAllocator.init(large_buffer);
@@ -159,8 +166,8 @@ pub fn main() !void {
 
 		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_114.gr","heuristic_114.gr");
 		//hpa_allocator.reset();
-		_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_158.gr","heuristic_158.gr");
-		hpa_allocator.reset();
+		//_ = try initial_solver(hpa,"instances/heuristic-public/heuristic_008.gr","heuristic_008.gr");
+		//hpa_allocator.reset();
 
 		var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator,100);
 		while(try dirit.next()) |item| {
@@ -173,8 +180,13 @@ pub fn main() !void {
 
 		std.sort.sort([]u8, file_list.items, {}, lessThanU8);
 
-		var cumulative:u32 = 0;
+		var cumulative:u32 = 3;
+		var skip:u32 = 32;
 		for(file_list.items) |name| {
+			if(skip>0) {
+				skip-=1;
+				continue;
+			}
 			var complete_name = try std.fmt.allocPrint(allocator,"{s}/{s}",.{target_directory,name});
 			defer allocator.free(complete_name);
 

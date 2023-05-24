@@ -10,6 +10,7 @@ const Node = @import("node.zig").Node;
 const bfs_mod = @import("bfs.zig");
 const compressed_bitset = @import("../util/compressed_bitmap.zig");
 const solver_resources = @import("solver.zig");
+const min_hash_mod = @import("../util/min_hash.zig");
 
 const pace_2023 = @import("../pace_2023/pace_fmt.zig");
 
@@ -23,10 +24,10 @@ pub fn Graph(comptime T: type) type {
     const promote_thresh = comptime if (T == u8) 0 else if (T == u16) 200 else 300;
     const degrade_tresh = comptime if (T == u8) 0 else if (T == u16) 100 else 200;
 
-    const NodeType = Node(T, promote_thresh, degrade_tresh);
 
     return struct {
         const Self = @This();
+    		pub const NodeType = Node(T, promote_thresh, degrade_tresh);
         pub const promote_thresh_inner = promote_thresh;
         number_of_nodes: u32,
         number_of_edges: u32,
@@ -64,9 +65,10 @@ pub fn Graph(comptime T: type) type {
 
         started_at: std.time.Instant,
 
-
-        last_merge_first_level_merge: bool,
-        last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
+				last_merge_first_level_merge: bool,
+				last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
+				
+				min_hash: min_hash_mod.MinHashSimilarity(T,4),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
@@ -299,7 +301,209 @@ pub fn Graph(comptime T: type) type {
             }
         };
 
-				pub fn calculateMaxTwwOfNewNeighbors(self: *Self, erased: T, survivor: T) T {
+				pub const TwwScorer = struct {
+					tww: T,
+					tww_nb: T,
+					delta_red_edges: i32,
+
+					pub fn default() TwwScorer {
+						return .{.tww = std.math.maxInt(T), .tww_nb = std.math.maxInt(T), .delta_red_edges = std.math.maxInt(i32)};
+					}
+
+					pub fn betterTww(self: *TwwScorer, other: *TwwScorer, current_tww: T) bool {
+						if(self.tww_nb <= current_tww) {
+							return self.tww < other.tww;
+						}
+						else {
+							return self.tww_nb <= other.tww_nb and self.tww < other.tww;
+						}
+					}
+
+					pub fn better(self: *const TwwScorer, other: *const TwwScorer, current_tww: T) bool {
+						if(self.tww_nb <= current_tww) {
+							if(self.delta_red_edges == other.delta_red_edges) return self.tww < other.tww;
+							return self.delta_red_edges < other.delta_red_edges;
+						}
+						else {
+							return self.tww_nb < other.tww_nb or (self.tww_nb == other.tww_nb and self.tww < other.tww);
+						}
+					}
+				};
+
+				pub const TwwScorerSim = struct {
+					tww: T,
+					tww_nb: T,
+					sim: u32,
+
+					pub fn default() TwwScorerSim {
+						return .{.tww = std.math.maxInt(T), .tww_nb = std.math.maxInt(T), .sim = 0};
+					}
+
+					pub fn better(self: *TwwScorerSim, other: *TwwScorerSim, current_tww: T) bool {
+						if(self.tww_nb <= current_tww) {
+							return self.sim > other.sim;
+						}
+						else {
+							return self.tww_nb < other.tww_nb or (self.tww_nb == other.tww_nb and self.sim > other.sim);
+						}
+					}
+				};
+
+				pub fn calculateMaxTwwScoreSim(self: *Self, erased: T, survivor: T) TwwScorerSim {
+            var delta_red: T = 0;
+						var tww:T = 0;
+            var red_iter = self.node_list[erased].red_edges.iterator();
+						var sim:u32 = 0;
+						var correction_factor:T = 0;
+
+            while (red_iter.next()) |item| {
+                if (item == survivor) {
+									correction_factor=1;
+									continue;
+								}
+
+                if (!self.node_list[survivor].red_edges.contains(item)) {
+                    delta_red += 1;
+									const key = min_hash_mod.MinHashSimilarity(T,3).calculateUniqueKey(item,survivor,self.number_of_nodes);
+
+									if(self.min_hash.hit_map.getPtr(key)) |pt| {
+										sim+=pt.*;
+									}
+                }
+            }
+
+            delta_red += self.node_list[survivor].red_edges.cardinality();
+						delta_red-=correction_factor;
+
+            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+            while (black_iter.next()) |item| {
+                if (item == survivor or item == erased) {
+                    continue;
+                }
+                // Came from erased
+                if (black_iter.first) {
+                    if (!self.node_list[survivor].red_edges.contains(item)) {
+                        delta_red += 1;
+												const key = min_hash_mod.MinHashSimilarity(T,3).calculateUniqueKey(item,survivor,self.number_of_nodes);
+
+												if(self.min_hash.hit_map.getPtr(key)) |pt| {
+													sim+=pt.*;
+												}
+												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    }
+                }
+                // Came from survivor
+                else {
+                    if (!self.node_list[erased].red_edges.contains(item)) {
+                        delta_red += 1;
+												const key = min_hash_mod.MinHashSimilarity(T,3).calculateUniqueKey(item,survivor,self.number_of_nodes);
+
+												if(self.min_hash.hit_map.getPtr(key)) |pt| {
+													sim+=pt.*;
+												}
+												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    }
+                }
+            }
+						return .{ .tww = delta_red, .tww_nb = std.math.max(delta_red,tww), .sim = sim};
+				}
+
+			pub fn calculateMaxTwwScoreSimDescend(self: *Self, erased: T, survivor: T) !TwwScorer {
+            var delta_red: T = 0;
+						var tww:T = 0;
+            var red_iter = self.node_list[erased].red_edges.iterator();
+						var correction_factor:T = 0;
+
+            while (red_iter.next()) |item| {
+                if (item == survivor) {
+									correction_factor=1;
+									continue;
+								}
+
+                if (!self.node_list[survivor].red_edges.contains(item)) {
+                    delta_red += 1;
+                }
+            }
+
+            delta_red += self.node_list[survivor].red_edges.cardinality();
+						delta_red-=correction_factor;
+
+            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+            while (black_iter.next()) |item| {
+                if (item == survivor or item == erased) {
+                    continue;
+                }
+                // Came from erased
+                if (black_iter.first) {
+                    if (!self.node_list[survivor].red_edges.contains(item)) {
+                        delta_red += 1;
+												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    }
+                }
+                // Came from survivor
+                else {
+                    if (!self.node_list[erased].red_edges.contains(item)) {
+                        delta_red += 1;
+												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    }
+                }
+            }
+						return .{ .tww = delta_red, .tww_nb = std.math.max(delta_red,tww), .delta_red_edges = try self.min_hash.getDeltaMergeSimilarity(erased,survivor) };
+				}
+				pub fn calculateMaxTwwScore(self: *Self, erased: T, survivor: T) TwwScorer {
+            var delta_red: T = 0;
+						var tww:T = 0;
+            var red_iter = self.node_list[erased].red_edges.iterator();
+						var delta_red_edges:i32 = 0;
+						var correction_factor:T = 0;
+
+            while (red_iter.next()) |item| {
+                if (item == survivor) {
+									delta_red_edges-=1;
+									correction_factor=1;
+									continue;
+								}
+
+                if (!self.node_list[survivor].red_edges.contains(item)) {
+                    delta_red += 1;
+                }
+								else {
+									delta_red_edges-=1;
+								}
+            }
+
+            delta_red += self.node_list[survivor].red_edges.cardinality();
+						delta_red-=correction_factor;
+
+            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+            while (black_iter.next()) |item| {
+                if (item == survivor or item == erased) {
+                    continue;
+                }
+                // Came from erased
+                if (black_iter.first) {
+                    if (!self.node_list[survivor].red_edges.contains(item)) {
+                        delta_red += 1;
+												delta_red_edges+=1;
+												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    }
+                }
+                // Came from survivor
+                else {
+                    if (!self.node_list[erased].red_edges.contains(item)) {
+                        delta_red += 1;
+												delta_red_edges+=1;
+												tww = std.math.max(self.node_list[item].red_edges.cardinality()+1,tww);
+                    }
+                }
+            }
+						return .{ .tww = delta_red, .tww_nb = std.math.max(delta_red,tww), .delta_red_edges = delta_red_edges };
+				}
+
+				pub fn calculateMaxTwwOfNewNeighbors(self: *Self, erased: T, survivor: T) struct{T,T} {
             var delta_red: T = 0;
 						var tww:T = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
@@ -336,7 +540,7 @@ pub fn Graph(comptime T: type) type {
                     }
                 }
             }
-						return std.math.max(delta_red,tww);
+						return .{std.math.max(delta_red,tww),delta_red};
 				}
 
 				pub fn calculateTwwOfMergeSurvivor(self: *Self, erased: T, survivor: T) T {
@@ -389,7 +593,11 @@ pub fn Graph(comptime T: type) type {
             // the probability of taking  this move
 
             while (red_iter.next()) |item| {
-                if (item == survivor) continue;
+                if (item == survivor) {
+                  //red_potential -= self.node_list[survivor].red_edges.cardinality();
+									//new_red_edges-=1;
+									continue;
+								}
 
                 if (!self.node_list[survivor].red_edges.contains(item)) {
                     delta_red += 1;
@@ -569,7 +777,7 @@ pub fn Graph(comptime T: type) type {
             }
         }
 
-        pub fn addContraction(self: *Self, erased: T, survivor: T, seq: *RetraceableContractionSequence(T)) !T {
+				pub fn addContractionNoMinHash(self: *Self, erased: T, survivor: T, seq: *RetraceableContractionSequence(T)) !T {
             if (self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
                 std.debug.print("Result {} {}\n", .{ erased, survivor });
                 return GraphError.InvalidContractionOneNodeErased;
@@ -647,10 +855,8 @@ pub fn Graph(comptime T: type) type {
             }
 
             for (remove_list.items) |item| {
-                //try self.min_hash.removeNode(self.allocator,item, &self.node_list[item].black_edges);
                 // Batch remove?
                 try self.node_list[survivor].removeBlackEdge(self.allocator, item);
-                //try self.min_hash.hashNodeNeighborhood(self.allocator,item, &self.node_list[item].black_edges);
             }
 
             var black_remove_iter = self.node_list[erased].black_edges.iterator();
@@ -658,7 +864,126 @@ pub fn Graph(comptime T: type) type {
                 try self.node_list[item].removeBlackEdge(self.allocator, erased);
             }
 
-            //try self.min_hash.hashNodeNeighborhood(self.allocator,survivor, &self.node_list[survivor].black_edges);
+            tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
+            try seq.addContraction(self.allocator, erased, survivor, std.math.max(tww, seq.getTwinWidth()));
+
+            self.updateLeafCount(survivor);
+            return tww;
+        }
+
+        pub fn addContraction(self: *Self, erased: T, survivor: T, seq: *RetraceableContractionSequence(T)) !T {
+            if (self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
+                std.debug.print("Result {} {}\n", .{ erased, survivor });
+                return GraphError.InvalidContractionOneNodeErased;
+            } else if (erased == survivor) {
+                return GraphError.MisformedEdgeList;
+            }
+
+						self.last_merge_first_level_merge = false;
+						self.last_merge_red_edges_erased.shrinkRetainingCapacity(0);
+
+            self.erased_nodes.set(erased);
+            if (self.node_list[survivor].isLeaf()) {
+                const parent = self.node_list[survivor].getFirstNeighboor();
+                self.node_list[parent].num_leafes -= 1;
+            }
+            if (self.node_list[erased].isLeaf()) {
+                const parent = self.node_list[erased].getFirstNeighboor();
+                self.node_list[parent].num_leafes -= 1;
+            }
+
+            var red_iter = self.node_list[erased].red_edges.iterator();
+            while (red_iter.next()) |item| {
+                try self.node_list[item].removeRedEdge(self.allocator, erased);
+                if (item != survivor) {
+                    if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+                        try self.node_list[item].addRedEdge(self.allocator, survivor);
+												self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
+												try self.min_hash.changedEdge(item,erased,true,survivor,true,self);
+                    } else {
+                        // Inform about the removal of the red edge
+                        try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).redToDeleted(item));
+												try self.min_hash.changedEdge(item,erased,true,null,true,self);
+                    }
+                }
+								else {
+									self.last_merge_first_level_merge = true;
+								}
+            }
+
+            var tww: T = 0;
+            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
+
+            var remove_list = std.ArrayList(T).init(self.allocator);
+            defer remove_list.deinit();
+
+            while (black_iter.next()) |item| {
+                if (item == survivor or item == erased) {
+										self.last_merge_first_level_merge = true;
+                    continue;
+                }
+                // Came from erased
+                if (black_iter.first) {
+                    if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+                        try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).blackToRedOther(item));
+
+                        try self.node_list[item].addRedEdge(self.allocator, survivor);
+
+												self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
+												//self.min_hash.addTransferedEdge(item,true,false);
+												try self.min_hash.changedEdge(item,erased,false,survivor,true,self);
+                    }
+										else {
+												try self.min_hash.changedEdge(item,erased,false,null,true,self);
+										}
+                }
+                // Came from survivor
+                else {
+                    if (try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
+                        // If it existed before we inherited from erased
+
+                        try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).blackToDeleted(item));
+												
+												try self.min_hash.changedEdge(item,survivor,false,null,true,self);
+                    } else {
+                        // Did not exist therefore turned
+                        try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).blackToRedOwn(item));
+												try self.min_hash.changedEdge(item,survivor,false,survivor,true,self);
+                    }
+                    try self.node_list[item].addRedEdge(self.allocator, survivor);
+
+                    try self.node_list[item].removeBlackEdge(self.allocator, survivor);
+										//self.min_hash.addChangeColorSurvivorEdge(item);
+                    try remove_list.append(item);
+                }
+                tww = std.math.max(tww, @intCast(T, self.node_list[item].red_edges.cardinality()));
+            }
+
+            for (remove_list.items) |item| {
+                // Batch remove?
+                try self.node_list[survivor].removeBlackEdge(self.allocator, item);
+            }
+
+            var black_remove_iter = self.node_list[erased].black_edges.iterator();
+            while (black_remove_iter.next()) |item| {
+                try self.node_list[item].removeBlackEdge(self.allocator, erased);
+								//self.min_hash.addRemovedEdge(item,true);
+            }
+
+						var black_iter_sur = self.node_list[survivor].black_edges.iterator();
+						while(black_iter_sur.next()) |t| {
+							try self.min_hash.changedEdge(t,erased,false,null,true,self);
+						}
+
+						//try self.min_hash.batchUpdateRehashNodes(erased,survivor,self);
+						//var iter_survivor = self.node_list[survivor].unorderedIterator();
+						//while(iter_survivor.next()) |item| {
+						//	if(item == erased) continue;
+						//	try self.min_hash.rehashNode(item,self);
+						//}
+						try self.min_hash.rehashNode(survivor, self);
+						//try self.min_hash.removeNode(erased);
+
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
             try seq.addContraction(self.allocator, erased, survivor, std.math.max(tww, seq.getTwinWidth()));
@@ -740,9 +1065,11 @@ pub fn Graph(comptime T: type) type {
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
                 .connected_components_node_list_slice = try allocator.alloc(T, number_of_nodes),
 								.started_at = try std.time.Instant.now(),
+								.min_hash = undefined,
 								.last_merge_first_level_merge = false,
 								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
             };
+						graph.min_hash = try min_hash_mod.MinHashSimiliarity(T,1).init(allocator,50,graph.number_of_nodes);
 
             return graph;
         }
@@ -778,7 +1105,7 @@ pub fn Graph(comptime T: type) type {
                 allocator.free(node_list);
             }
 
-            return Self{
+            var graph_instance = Self{
                 .number_of_nodes = pace.number_of_nodes,
                 .number_of_edges = pace.number_of_edges, //ATM
                 .node_list = node_list,
@@ -792,9 +1119,15 @@ pub fn Graph(comptime T: type) type {
                 .connected_components_min_heap = std.PriorityQueue(connected_components.ConnectedComponentIndex(T), void, connected_components.ConnectedComponentIndex(T).compareComponentIndexDesc).init(allocator, {}),
                 .failing_allocator = std.heap.FixedBufferAllocator.init(&[_]u8{}),
 								.started_at = try std.time.Instant.now(),
+								.min_hash = undefined,
 								.last_merge_first_level_merge = false,
 								.last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
             };
+
+						var hash = try min_hash_mod.MinHashSimilarity(T,4).init(graph_instance.allocator,40,17,graph_instance.number_of_nodes);
+						graph_instance.min_hash = hash;
+
+						return graph_instance;
         }
 
         pub fn findAllConnectedComponents(self: *Self) ![][]u32 {

@@ -982,6 +982,11 @@ pub fn Graph(comptime T: type) type {
             try self.min_hash.rehashNode(survivor, self);
             try self.min_hash.removeNode(erased);
 
+						var iter = self.node_list[survivor].unorderedIterator();
+						while(iter.next()) |item| {
+							try self.min_hash.updatedNode(item,self);
+						}
+
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
             try seq.addContraction(self.allocator, erased, survivor, std.math.max(tww, seq.getTwinWidth()));
 

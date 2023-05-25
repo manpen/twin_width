@@ -56,10 +56,10 @@ pub const MinHash = struct {
     const Self = @This();
     permutation: []u32,
 
-		pub inline fn permutate(slice: []u32, seed: u64) void {
-			var gen = std.rand.DefaultPrng.init(seed);
-      fisher_yates_shuffle(u32, slice, &gen);
-		}
+    pub inline fn permutate(slice: []u32, seed: u64) void {
+        var gen = std.rand.DefaultPrng.init(seed);
+        fisher_yates_shuffle(u32, slice, &gen);
+    }
 
     pub inline fn generatePermutation(allocator: std.mem.Allocator, length: u32) ![]u32 {
         var memory = try allocator.alloc(u32, length);
@@ -106,7 +106,7 @@ pub fn MinHashBand(comptime B: u32) type {
         const Self = @This();
         hash_functions: []MinHash,
         hash_cache: []u32,
-        collisions: std.HashMapUnmanaged([]u32, std.AutoArrayHashMapUnmanaged(u32,void), MinHashBandContext, 80),
+        collisions: std.HashMapUnmanaged([]u32, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContext, 80),
         allocator: std.mem.Allocator,
         erased_set: std.AutoHashMapUnmanaged(u32, void),
 
@@ -127,7 +127,7 @@ pub fn MinHashBand(comptime B: u32) type {
                 hash.* = MinHash.init(permutation);
             }
 
-            var collisions = std.HashMapUnmanaged([]u32, std.ArrayListUnmanaged(u32), MinHashBandContext, 80){};
+            var collisions = std.HashMapUnmanaged([]u32, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContext, 80){};
 
             var hash_cache = try allocator.alloc(u32, cache_size * B);
 
@@ -136,7 +136,7 @@ pub fn MinHashBand(comptime B: u32) type {
             return Self{ .hash_functions = hashes, .collisions = collisions, .allocator = allocator, .hash_cache = hash_cache, .erased_set = erased_set };
         }
 
-        pub inline fn rehashItem(self: *Self, comptime IterType: type, comptime Context: type, key: u32, iterator: IterType, context: Context, callback_removed: fn (Context, u32, ?*std.ArrayListUnmanaged(u32)) void, callback_added: fn (Context, u32, ?*std.ArrayListUnmanaged(u32)) void) !void {
+        pub inline fn rehashItem(self: *Self, comptime IterType: type, comptime Context: type, key: u32, iterator: IterType, context: Context, callback_removed: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void, callback_added: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void) !void {
             const first = try self.removeItem(key);
             callback_removed(context, key, first);
 
@@ -144,12 +144,12 @@ pub fn MinHashBand(comptime B: u32) type {
             callback_added(context, key, next);
         }
 
-        pub inline fn rehashItemNoRemove(self: *Self, comptime IterType: type, comptime Context: type, key: u32, iterator: IterType, context: Context, callback_added: fn (Context, u32, ?*std.ArrayListUnmanaged(u32)) void) !void {
+        pub inline fn rehashItemNoRemove(self: *Self, comptime IterType: type, comptime Context: type, key: u32, iterator: IterType, context: Context, callback_added: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void) !void {
             const next = try self.addItem(IterType, key, iterator);
             callback_added(context, key, next);
         }
 
-        pub inline fn updateItem(self: *Self, comptime IterType: type, comptime Context: type, key: u32, iterator: IterType, context: Context, callback_removed: fn (Context, u32, ?*std.ArrayListUnmanaged(u32)) void, callback_added: fn (Context, u32, ?*std.ArrayListUnmanaged(u32)) void, removed_feature: ?u32, added_feature: ?u32) !void {
+        pub inline fn updateItem(self: *Self, comptime IterType: type, comptime Context: type, key: u32, iterator: IterType, context: Context, callback_removed: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void, callback_added: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void, removed_feature: ?u32, added_feature: ?u32) !void {
             var removed: bool = false;
             for (0..B) |i| {
                 const min_before = self.hash_cache[key * B + i];
@@ -180,82 +180,23 @@ pub fn MinHashBand(comptime B: u32) type {
             }
         }
 
-        pub inline fn getMergeSignatureHits(self: *Self, comptime T: type, erased: u32, survivor: u32, graph: *graph_mod.Graph(T)) !?*std.ArrayListUnmanaged(u32) {
-            var arr = try std.BoundedArray(u32, B).init(0);
-            @memset(arr.buffer[0..B], std.math.maxInt(u32));
-            self.erased_set.clearRetainingCapacity();
-
-            var red_iter = graph.node_list[erased].red_edges.iterator();
-            while (red_iter.next()) |item| {
-                if (item == survivor) continue;
-                if (!graph.node_list[survivor].red_edges.contains(item)) {
-                    for (0..B) |i| {
-                        arr.buffer[i] = std.math.min(arr.buffer[i], self.hash_functions[i].getHash(item + graph.number_of_nodes));
-                    }
-                }
-            }
-            var red_iter_sur = graph.node_list[survivor].red_edges.iterator();
-            while (red_iter_sur.next()) |item| {
-                for (0..B) |i| {
-                    arr.buffer[i] = std.math.min(arr.buffer[i], self.hash_functions[i].getHash(item + graph.number_of_nodes));
-                }
-            }
-
-            // Added turned edges still missing all remaining black edges of survivor
-            var black_iter = graph.node_list[erased].black_edges.xorIterator(&graph.node_list[survivor].black_edges);
-            while (black_iter.next()) |item| {
-                if (item == survivor or item == erased) {
-                    try self.erased_set.put(self.allocator, item, {});
-                    continue;
-                }
-                // Came from erased
-                if (black_iter.first) {
-                    if (!graph.node_list[survivor].red_edges.contains(item)) {
-                        for (0..B) |i| {
-                            arr.buffer[i] = std.math.min(arr.buffer[i], self.hash_functions[i].getHash(item + graph.number_of_nodes));
-                        }
-                    }
-                }
-                // Came from survivor
-                else {
-                    if (!graph.node_list[erased].red_edges.contains(item)) {
-                        try self.erased_set.put(self.allocator, item, {});
-                        for (0..B) |i| {
-                            arr.buffer[i] = std.math.min(arr.buffer[i], self.hash_functions[i].getHash(item + graph.number_of_nodes));
-                        }
-                    }
-                }
-            }
-
-            var black_iter_sur = graph.node_list[survivor].black_edges.iterator();
-            while (black_iter_sur.next()) |it| {
-                if (self.erased_set.contains(it)) continue;
-                for (0..B) |i| {
-                    arr.buffer[i] = std.math.min(arr.buffer[i], self.hash_functions[i].getHash(it));
-                }
-            }
-
-            const key = std.mem.sliceAsBytes(arr.buffer[0..B]);
-            return self.collisions.getPtr(key);
-        }
-
-        inline fn addItemFromCache(self: *Self, key: u32) !?*std.ArrayListUnmanaged(u32) {
+        inline fn addItemFromCache(self: *Self, key: u32) !?*std.AutoArrayHashMapUnmanaged(u32, void) {
             if (self.collisions.getPtr(self.hash_cache[key * B .. key * B + B])) |result| {
-                try result.append(self.allocator, key);
+                try result.put(self.allocator, key, {});
                 return result;
             } else {
                 var copy = try self.allocator.alloc(u32, B);
                 @memcpy(copy, self.hash_cache[key * B .. key * B + B]);
 
-                var new_list = try std.ArrayListUnmanaged(u32).initCapacity(self.allocator, 1);
-                try new_list.append(self.allocator, key);
+                var new_list = std.AutoArrayHashMapUnmanaged(u32, void){};
+                try new_list.put(self.allocator, key, {});
                 try self.collisions.put(self.allocator, copy, new_list);
             }
             return null;
         }
 
         // Returns the collisions if there were any
-        pub inline fn addItem(self: *Self, comptime IterType: type, key: u32, iterator: IterType) !?*std.ArrayListUnmanaged(u32) {
+        pub inline fn addItem(self: *Self, comptime IterType: type, key: u32, iterator: IterType) !?*std.AutoArrayHashMapUnmanaged(u32, void) {
             @memset(self.hash_cache[key * B .. key * B + B], std.math.maxInt(u32));
             while (iterator.next()) |item| {
                 for (0..B) |i| {
@@ -269,15 +210,10 @@ pub fn MinHashBand(comptime B: u32) type {
             return self.hash_cache[key * B .. key * B + B];
         }
 
-        pub inline fn removeItem(self: *Self, key: u32) !?*std.ArrayListUnmanaged(u32) {
+        pub inline fn removeItem(self: *Self, key: u32) !?*std.AutoArrayHashMapUnmanaged(u32, void) {
             if (self.collisions.getPtr(self.getSignature(key))) |ptr| {
-                if (ptr.items.len > 1) {
-                    for (0..ptr.items.len) |index| {
-                        if (ptr.items[index] == key) {
-                            _ = ptr.swapRemove(index);
-                            break;
-                        }
-                    }
+                if (ptr.count() > 1) {
+                    _ = ptr.swapRemove(key);
                     return ptr;
                 }
                 // Release owned memory
@@ -311,7 +247,7 @@ pub const MinHashEntry = struct {
     score: u32,
 
     pub fn fromKey(key: u64) MinHashEntry {
-        return MinHashEntry {
+        return MinHashEntry{
             .key = key,
             .score = 0,
         };
@@ -320,7 +256,7 @@ pub const MinHashEntry = struct {
     pub inline fn calculateScore(comptime T: type, key: u64, score: u32, graph: *graph_mod.Graph(T)) u32 {
         const mv = MinHashEntry.keyIntoMove(T, key, graph.number_of_nodes);
         const combined_card = @intCast(u32, graph.node_list[mv.erased].cardinality()) + @intCast(u32, graph.node_list[mv.survivor].cardinality());
-				const tww_nb = graph.calculateMaxTwwScore(mv.erased,mv.survivor).tww_nb;
+        const tww_nb = graph.calculateMaxTwwScore(mv.erased, mv.survivor).tww_nb;
         const score_calc: u32 = (combined_card - (score * combined_card) / @intCast(u32, graph.min_hash.bands.len));
         _ = score_calc;
         return tww_nb;
@@ -371,10 +307,10 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         hit_map: std.AutoHashMapUnmanaged(u64, u32),
 
         tww_nb: std.AutoArrayHashMapUnmanaged(u64, u32),
-				update_list: std.AutoHashMapUnmanaged(u32,std.AutoArrayHashMapUnmanaged(u32,void)),
+        update_list: std.AutoHashMapUnmanaged(u32, std.AutoArrayHashMapUnmanaged(u32, void)),
 
-				similarity_cardinality: []std.AutoArrayHashMapUnmanaged(u64,void),
-				similarity_threshold: u32,
+        similarity_cardinality: []std.AutoArrayHashMapUnmanaged(u64, void),
+        similarity_threshold: u32,
 
         number_of_nodes: u32,
         allocator: std.mem.Allocator,
@@ -426,21 +362,26 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             return @intCast(u64, a) * number_of_nodes + @intCast(u64, b);
         }
 
-        fn removedCallback(self: *Self, key: u32, list: ?*std.ArrayListUnmanaged(u32)) void {
+        fn removedCallback(self: *Self, key: u32, list: ?*std.AutoArrayHashMapUnmanaged(u32, void)) void {
             if (list) |l| {
-                for (l.items) |partner| {
+                var iter = l.iterator();
+                while (iter.next()) |partner_ptr| {
+                    const partner = partner_ptr.key_ptr.*;
                     if (partner == key) continue;
                     const unique_key = Self.calculateUniqueKey(partner, key, self.number_of_nodes);
                     if (self.hit_map.getPtr(unique_key)) |pt| {
+                        _ = self.similarity_cardinality[pt.* - 1].swapRemove(unique_key);
                         pt.* -= 1;
                         if (pt.* == 0) {
                             _ = self.hit_map.remove(unique_key);
+                        } else {
+                            _ = self.similarity_cardinality[pt.* - 1].put(self.allocator, unique_key, {}) catch @panic("Could not change similarity");
                         }
-												// Untrack this node now!
-												if(pt.* < self.similarity_threshold) {
-													
-												}
-
+                        // Untrack this node now!
+                        if ((pt.* + 1) == self.similarity_threshold) {
+                            // Remove from similarity list
+                            self.untrackNodePair(partner, key) catch @panic("Error untrack node pair!");
+                        }
                     } else {
                         @panic("Should not happen!");
                     }
@@ -448,22 +389,72 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             }
         }
 
-        fn addedCallback(self: *Self, key: u32, list: ?*std.ArrayListUnmanaged(u32)) void {
+        fn addedCallback(self: *Self, key: u32, list: ?*std.AutoArrayHashMapUnmanaged(u32, void)) void {
             if (list) |l| {
-                for (l.items) |partner| {
+                var iter = l.iterator();
+                while (iter.next()) |partner_ptr| {
+                    const partner = partner_ptr.key_ptr.*;
                     if (partner == key) continue;
                     const unique_key = Self.calculateUniqueKey(partner, key, self.number_of_nodes);
                     if (self.hit_map.getPtr(unique_key)) |pt| {
+                        _ = self.similarity_cardinality[pt.* - 1].swapRemove(unique_key);
                         pt.* += 1;
-												// Track this move now
-												if(self.similarity_threshold == pt.*) {
-
-												}
+                        _ = self.similarity_cardinality[pt.* - 1].put(self.allocator, unique_key, {}) catch @panic("Could not change similarity");
+                        // Track this move now
+                        if (self.similarity_threshold == pt.* and self.tww_nb.count() < 100) {
+                            self.trackNodePair(partner, key) catch @panic("Error while tracking node");
+                        }
                     } else {
                         self.hit_map.put(self.allocator, unique_key, 1) catch @panic("Out of memory!");
                     }
                 }
             }
+        }
+
+        fn trackNodePair(self: *Self, erased: u32, survivor: u32) !void {
+            var unique_key = Self.calculateUniqueKey(erased, survivor, self.number_of_nodes);
+            if (!self.tww_nb.contains(unique_key)) {
+                var tww = self.graph.calculateMaxTwwScore(@intCast(T, erased), @intCast(T, survivor));
+                try self.tww_nb.put(self.allocator, unique_key, tww.tww);
+                if (self.update_list.getPtr(erased)) |ptr| {
+                    try ptr.put(self.allocator, survivor, {});
+                } else {
+                    var set = std.AutoArrayHashMapUnmanaged(u32, void){};
+                    try set.put(self.allocator, survivor, {});
+                    try self.update_list.put(self.allocator, erased, set);
+                }
+                if (self.update_list.getPtr(survivor)) |ptr| {
+                    try ptr.put(self.allocator, erased, {});
+                } else {
+                    var set = std.AutoArrayHashMapUnmanaged(u32, void){};
+                    try set.put(self.allocator, erased, {});
+                    try self.update_list.put(self.allocator, survivor, set);
+                }
+            }
+        }
+
+        fn untrackNodePair(self: *Self, erased: u32, survivor: u32) !void {
+            if (self.update_list.getPtr(erased)) |pt| {
+                _ = pt.swapRemove(survivor);
+                if (self.update_list.getPtr(survivor)) |sr| {
+                    _ = sr.swapRemove(erased);
+                    const key = Self.calculateUniqueKey(erased, survivor, self.number_of_nodes);
+                    _ = self.tww_nb.swapRemove(key);
+                }
+            }
+        }
+
+        fn untrackNode(self: *Self, node: u32) !void {
+            if (self.update_list.getPtr(node)) |pt| {
+                var iter = pt.iterator();
+                while (iter.next()) |it| {
+                    _ = self.tww_nb.swapRemove(Self.calculateUniqueKey(node, it.key_ptr.*, self.number_of_nodes));
+                    var update_list = self.update_list.getPtr(it.key_ptr.*);
+                    _ = update_list.?.swapRemove(node);
+                }
+                pt.deinit(self.allocator);
+            }
+            _ = self.update_list.remove(node);
         }
 
         pub fn removeNode(self: *Self, node: u32) !void {
@@ -472,6 +463,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                 const result = try self.bands[index].removeItem(node);
                 Self.removedCallback(self, node, result);
             }
+            try self.untrackNode(node);
         }
 
         pub fn rehashNode(self: *Self, node: u32, graph: *graph_mod.Graph(T)) !void {
@@ -494,22 +486,22 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         }
 
         pub fn bootstrapNodes(self: *Self, nodes: []T, graph: *graph_mod.Graph(T), seed: u64) !void {
-						MinHash.permutate(self.permutation,seed);
+            MinHash.permutate(self.permutation, seed);
             self.graph = graph;
             for (0..self.bands.len) |j| {
                 self.bands[j].clear();
             }
             self.hit_map.clearRetainingCapacity();
-						self.similarity_threshold = 0;
-						for(self.similarity_cardinality) |*n| {
-							n.clearRetainingCapacity();
-						}
+            self.similarity_threshold = 0;
+            for (self.similarity_cardinality) |*n| {
+                n.clearRetainingCapacity();
+            }
 
-						self.tww_nb.clearRetainingCapacity();
-						var iter_v = self.update_list.valueIterator();
-						while(iter_v.next()) |item| {
-							item.deinit(self.allocator);
-						}
+            self.tww_nb.clearRetainingCapacity();
+            var iter_v = self.update_list.valueIterator();
+            while (iter_v.next()) |item| {
+                item.deinit(self.allocator);
+            }
 
             for (0..nodes.len) |index| {
                 const i = nodes[index];
@@ -519,7 +511,9 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                     var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[i].unorderedIterator() };
 
                     if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter)) |hits| {
-                        for (hits.items) |hit| {
+                        var iterator = hits.iterator();
+                        while (iterator.next()) |hit_pt| {
+                            const hit = hit_pt.key_ptr.*;
                             if (hit != i) {
                                 const key = Self.calculateUniqueKey(@intCast(u32, i), hit, graph.number_of_nodes);
                                 if (self.hit_map.getPtr(key)) |it| {
@@ -535,44 +529,38 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
             var entries = self.hit_map.iterator();
             while (entries.next()) |value| {
-								try self.similarity_cardinality[value.value_ptr.*-1].put(self.allocator,value.key_ptr.*,{});
+                try self.similarity_cardinality[value.value_ptr.* - 1].put(self.allocator, value.key_ptr.*, {});
             }
 
-						var threshold = self.bands.len-1;
-						var cum_cardinality:u32 = 0;
-						while(threshold > 0) {
-							cum_cardinality += @intCast(u32,self.similarity_cardinality[threshold].count());
-							if(cum_cardinality > 100) break;
-							threshold-=1;
-						}
-							std.debug.print("Cardinality {}\n",.{cum_cardinality});
+            var threshold = self.bands.len - 1;
+            var cum_cardinality: u32 = 0;
+            while (threshold > 0) {
+                cum_cardinality += @intCast(u32, self.similarity_cardinality[threshold].count());
+                if (cum_cardinality > 100) break;
+                threshold -= 1;
+            }
+            std.debug.print("Cardinality {}\n", .{cum_cardinality});
 
-						self.similarity_threshold = @intCast(u32,threshold);
+            self.similarity_threshold = @intCast(u32, threshold);
 
-						for(threshold..self.bands.len) |index| {
-							var iter = self.similarity_cardinality[index].iterator();
-							while(iter.next()) |it| {
-								const mv = MinHashEntry.keyIntoMove(T,it.key_ptr.*,graph.number_of_nodes);
-								var tww = self.graph.calculateMaxTwwScore(mv.erased,mv.survivor);
-								try self.tww_nb.put(self.allocator,it.key_ptr.*,tww.tww_nb);
-								if(self.update_list.getPtr(mv.erased)) |ptr| {
-									try ptr.put(self.allocator,mv.survivor,{});
-								}
-								else {
-									var set = std.AutoArrayHashMapUnmanaged(u32,void){};
-									try set.put(self.allocator, mv.survivor,{});
-									try self.update_list.put(self.allocator,mv.erased,set);
-								}
-								if(self.update_list.getPtr(mv.survivor)) |ptr| {
-									try ptr.put(self.allocator,mv.erased,{});
-								}
-								else {
-									var set = std.AutoArrayHashMapUnmanaged(u32,void){};
-									try set.put(self.allocator, mv.erased,{});
-									try self.update_list.put(self.allocator,mv.survivor,set);
-								}
-							}
-						}
+            for (threshold..self.bands.len) |index| {
+                var iter = self.similarity_cardinality[index].iterator();
+                while (iter.next()) |it| {
+                    if (self.tww_nb.count() > 100) break;
+                    const mv = MinHashEntry.keyIntoMove(T, it.key_ptr.*, graph.number_of_nodes);
+                    try self.trackNodePair(mv.erased, mv.survivor);
+                }
+            }
+        }
+
+        pub fn updatedNode(self: *Self, node: T, graph: *graph_mod.Graph(T)) !void {
+            if (self.update_list.getPtr(node)) |pt| {
+                var iter = pt.iterator();
+                while (iter.next()) |it| {
+                    if (graph.erased_nodes.get(it.key_ptr.*)) continue;
+                    try self.tww_nb.put(self.allocator, Self.calculateUniqueKey(node, it.key_ptr.*, graph.number_of_nodes), graph.calculateMaxTwwScore(node, @intCast(T, it.key_ptr.*)).tww_nb);
+                }
+            }
         }
 
         pub fn getDeltaMergeSimilarity(self: *Self, erased: u32, survivor: u32) !i32 {
@@ -594,11 +582,38 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         }
 
         pub fn getBestMove(self: *Self, graph: *graph_mod.Graph(T), current_tww: T) !?contraction.Contraction(T) {
-            _ = current_tww;
-            _ = graph;
-            _ = self;
             var min_cont: ?contraction.Contraction(T) = null;
-						return min_cont;
+            var best_tww = graph_mod.Graph(T).InducedTwinWidthPotential.default();
+
+            // Fill up
+            outer: while (self.tww_nb.count() < 100) {
+                for (1..self.bands.len + 1) |id| {
+                    const index = @intCast(u32, self.bands.len - id);
+                    self.similarity_threshold = index;
+                    var iter = self.similarity_cardinality[index].iterator();
+                    while (iter.next()) |it| {
+                        if (self.tww_nb.count() >= 100) break :outer;
+                        const mv = MinHashEntry.keyIntoMove(T, it.key_ptr.*, graph.number_of_nodes);
+                        try self.trackNodePair(mv.erased, mv.survivor);
+                    }
+                }
+            }
+
+            var iter = self.tww_nb.iterator();
+            while (iter.next()) |it| {
+                const mv = MinHashEntry.keyIntoMove(T, it.key_ptr.*, self.number_of_nodes);
+								if(graph.erased_nodes.get(mv.erased) or graph.erased_nodes.get(mv.survivor)) {
+									_ = self.tww_nb.swapRemove(it.key_ptr.*);
+									continue;
+								}
+                var tww = graph.calculateInducedTwwPotential(mv.erased, mv.survivor, &best_tww, current_tww);
+
+                if (tww.isLess(best_tww, current_tww)) {
+                    min_cont = .{ .erased = mv.erased, .survivor = mv.survivor };
+                    best_tww = tww;
+                }
+            }
+            return min_cont;
         }
 
         pub fn init(allocator: std.mem.Allocator, num_bands: u32, number_of_nodes: u32) !Self {
@@ -606,21 +621,20 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             var permutation = try MinHash.generatePermutation(allocator, number_of_nodes * num_bands * 2);
             var counter: u32 = 0;
             for (bands) |*band| {
-                band.* = try MinHashBand(B).init(allocator, number_of_nodes, permutation[counter..(counter + 2*number_of_nodes)]);
-                counter += number_of_nodes*2;
+                band.* = try MinHashBand(B).init(allocator, number_of_nodes, permutation[counter..(counter + 2 * number_of_nodes)]);
+                counter += number_of_nodes * 2;
             }
 
             var hit_map = std.AutoHashMapUnmanaged(u64, u32){};
 
+            var tww_nb = std.AutoArrayHashMapUnmanaged(u64, u32){};
+            var update_list = std.AutoHashMapUnmanaged(u32, std.AutoArrayHashMapUnmanaged(u32, void)){};
 
-        		var tww_nb = std.AutoArrayHashMapUnmanaged(u64, u32){};
-						var update_list = std.AutoHashMapUnmanaged(u32,std.AutoArrayHashMapUnmanaged(u32,void)){};
-
-						var similarity_cardinality = try allocator.alloc(std.AutoArrayHashMapUnmanaged(u64,void),num_bands);
-						for(similarity_cardinality) |*card| {
-							card.* = std.AutoArrayHashMapUnmanaged(u64,void){};
-						}
-						var similarity_threshold:u32 = 0;
+            var similarity_cardinality = try allocator.alloc(std.AutoArrayHashMapUnmanaged(u64, void), num_bands);
+            for (similarity_cardinality) |*card| {
+                card.* = std.AutoArrayHashMapUnmanaged(u64, void){};
+            }
+            var similarity_threshold: u32 = 0;
 
             return Self{ .bands = bands, .permutation = permutation, .hit_map = hit_map, .allocator = allocator, .number_of_nodes = number_of_nodes, .graph = undefined, .tww_nb = tww_nb, .update_list = update_list, .similarity_cardinality = similarity_cardinality, .similarity_threshold = similarity_threshold };
         }

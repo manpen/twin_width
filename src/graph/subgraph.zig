@@ -188,7 +188,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
             contractions_left.* -= 1;
 
-            var last_evoked_twin_width = try self.graph.addContractionNoMinHash(min_contraction.erased, min_contraction.survivor, seq);
+            var last_evoked_twin_width = try self.graph.addContraction(min_contraction.erased, min_contraction.survivor, seq);
             total_tww = std.math.max(last_evoked_twin_width, total_tww);
 
             // Reduce leafes if one was created
@@ -200,7 +200,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                     while (parent_node_iter.next()) |item| {
                         if (item == min_contraction.survivor) continue;
                         if (self.graph.node_list[item].isLeaf()) {
-                            last_evoked_twin_width = try self.graph.addContractionNoMinHash(item, min_contraction.survivor, seq);
+                            last_evoked_twin_width = try self.graph.addContraction(item, min_contraction.survivor, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
                             enable_follow_up_merge.* = false;
@@ -219,7 +219,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                 while (parent_node_iter.next()) |item| {
                     if (self.graph.node_list[item].isLeaf()) {
                         if (first_leaf) |k| {
-                            last_evoked_twin_width = try self.graph.addContractionNoMinHash(k, item, seq);
+                            last_evoked_twin_width = try self.graph.addContraction(k, item, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
                             enable_follow_up_merge.* = false;
@@ -843,11 +843,13 @@ pub fn InducedSubGraph(comptime T: type) type {
             return seq.getTwinWidth();
         }
 
-        pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), find_articulation_points: bool) !T {
+        pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), find_articulation_points: bool, seed: u64) !T {
             _ = find_articulation_points;
             // Use once at the beginning later we will only consider merges which involve the survivor of the last merge
             // Paths might be dangerous
-            try self.reduceLeafesAndPaths(K, P, seq, solver, true);
+            try self.reduceLeafesAndPaths(K, P, seq, solver, false);
+
+            try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph, seed);
 
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();
@@ -944,21 +946,63 @@ pub fn InducedSubGraph(comptime T: type) type {
 
                 // Reset all variables which were set to select the best postponed move
 
-                //if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
-                //	const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
-                //	if(t.isLess(selection.potential,seq.getTwinWidth())) {
-                //		min_contraction = best;
-                //	}
-                //}
+								var used_min_hash_move:bool = false;
+                if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
+                	const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
+                	if(t.isLess(selection.potential,seq.getTwinWidth())) {
+                		min_contraction = best;
+										used_min_hash_move = true;
+                	}
+                }
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
 
                 const contractions_left_copy = contractions_left;
 
                 total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge, seq, min_contraction, &contractions_left), total_tww);
+
+
+
                 //try self.graph.min_hash.reinsertKMoves(3*K,&moves, self.graph);
 
                 solver.priority_queue.addTick(@intCast(T, contractions_left_copy - contractions_left));
+
+								if (enable_follow_up_merge and !used_min_hash_move and contractions_left > total_tww) {
+                    var follow_up_moves: u32 = 0;
+                    var next_selection: ?TargetMinimalInducedTww = null;
+
+                    while (!self.graph.erased_nodes.get(first_node)) {
+                        if (next_selection == null) {
+                            var iterator = solver.scorer.cachedIterator();
+                            next_selection = self.selectBestMoveOfIter(@TypeOf(iterator), &iterator, first_node, total_tww);
+                        }
+                        if (next_selection.?.potential.isLessOrEqual(selection.potential, total_tww)) {
+                            const contractions_left_copy_inner = contractions_left;
+
+                            min_contraction = contraction.Contraction(T){ .survivor = first_node, .erased = next_selection.?.target };
+
+                            total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge, seq, min_contraction, &contractions_left), total_tww);
+                            follow_up_moves += 1;
+                            next_selection = null;
+
+                            solver.priority_queue.addTick(@intCast(T, contractions_left_copy_inner - contractions_left));
+
+                            if (total_tww >= contractions_left) break;
+                            if (!enable_follow_up_merge) break;
+                        } else {
+                            // If the node seems egligable for merges update distance metrics and try again to merge
+                            if (follow_up_moves > 5) {
+                                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
+                                next_selection = try self.selectBestMove(K, P, first_node, solver, total_tww);
+                                follow_up_moves = 0;
+                            } else {
+                                // otherwise break
+                                break;
+                            }
+                        }
+                    }
+                }
+
 
                 // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
                 max_consecutive_postpones = contractions_left + 1;

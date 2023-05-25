@@ -67,7 +67,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 4),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 5),
 
         pub const LargeListStorageType = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh);
 
@@ -969,7 +969,7 @@ pub fn Graph(comptime T: type) type {
             //	try self.min_hash.rehashNode(item,self);
             //}
             try self.min_hash.rehashNode(survivor, self);
-            //try self.min_hash.removeNode(erased);
+            try self.min_hash.removeNode(erased);
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
             try seq.addContraction(self.allocator, erased, survivor, std.math.max(tww, seq.getTwinWidth()));
@@ -1109,7 +1109,7 @@ pub fn Graph(comptime T: type) type {
                 .last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, pace.number_of_nodes),
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 40, 17, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 5).init(graph_instance.allocator, 12, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
 
             return graph_instance;

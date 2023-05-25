@@ -55,27 +55,28 @@ pub inline fn circular_permutation_shift(comptime T: type, data: []T) void {
 pub const MinHash = struct {
     const Self = @This();
     permutation: []u32,
-    shift: u32,
-    pub inline fn generatePermutation(allocator: std.mem.Allocator, length: u32, seed: u64) ![]u32 {
+
+		pub inline fn permutate(slice: []u32, seed: u64) void {
+			var gen = std.rand.DefaultPrng.init(seed);
+      fisher_yates_shuffle(u32, slice, &gen);
+		}
+
+    pub inline fn generatePermutation(allocator: std.mem.Allocator, length: u32) ![]u32 {
         var memory = try allocator.alloc(u32, length);
         for (0..memory.len) |i| {
             memory[i] = @intCast(u32, i);
         }
-
-        var gen = std.rand.DefaultPrng.init(seed);
-        fisher_yates_shuffle(u32, memory, &gen);
         return memory;
     }
 
-    pub inline fn init(permutation: []u32, shift: u32) Self {
+    pub inline fn init(permutation: []u32) Self {
         return Self{
             .permutation = permutation,
-            .shift = shift,
         };
     }
 
     pub inline fn getHash(self: *const Self, item: u32) u32 {
-        return self.permutation[(item + self.shift) % self.permutation.len];
+        return self.permutation[item];
     }
 
     pub inline fn hash(self: *const Self, comptime InputIteratorType: type, iter: InputIteratorType) u32 {
@@ -119,13 +120,11 @@ pub fn MinHashBand(comptime B: u32) type {
             self.erased_set.clearRetainingCapacity();
         }
 
-        pub inline fn init(allocator: std.mem.Allocator, cache_size: u32, permutation: []u32, shift: u32) !Self {
+        pub inline fn init(allocator: std.mem.Allocator, cache_size: u32, permutation: []u32) !Self {
             var hashes = try allocator.alloc(MinHash, B);
 
-            var counter: u32 = 0;
             for (hashes) |*hash| {
-                hash.* = MinHash.init(permutation, shift + counter);
-                counter += 5;
+                hash.* = MinHash.init(permutation);
             }
 
             var collisions = std.HashMapUnmanaged([]u32, std.ArrayListUnmanaged(u32), MinHashBandContext, 80){};
@@ -312,7 +311,7 @@ pub const MinHashEntry = struct {
     score: u32,
 
     pub fn fromKey(key: u64) MinHashEntry {
-        return MinHashEntry{
+        return MinHashEntry {
             .key = key,
             .score = 0,
         };
@@ -321,8 +320,10 @@ pub const MinHashEntry = struct {
     pub inline fn calculateScore(comptime T: type, key: u64, score: u32, graph: *graph_mod.Graph(T)) u32 {
         const mv = MinHashEntry.keyIntoMove(T, key, graph.number_of_nodes);
         const combined_card = @intCast(u32, graph.node_list[mv.erased].cardinality()) + @intCast(u32, graph.node_list[mv.survivor].cardinality());
+				const tww_nb = graph.calculateMaxTwwScore(mv.erased,mv.survivor).tww_nb;
         const score_calc: u32 = (combined_card - (score * combined_card) / @intCast(u32, graph.min_hash.bands.len));
-        return score_calc;
+        _ = score_calc;
+        return tww_nb;
     }
 
     pub fn from(comptime T: type, key: u64, score: u32, graph: *graph_mod.Graph(T)) MinHashEntry {
@@ -367,7 +368,6 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
         bands: []MinHashBand(B),
         permutation: []u32,
-        shift: u32,
         hit_map: std.AutoHashMapUnmanaged(u64, u32),
         sim_nodes: std.AutoHashMapUnmanaged(u64, void),
 
@@ -449,8 +449,8 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                     const unique_key = Self.calculateUniqueKey(partner, key, self.number_of_nodes);
                     if (self.hit_map.getPtr(unique_key)) |pt| {
                         pt.* += 1;
-                        const ent = MinHashEntry.from(T, unique_key, pt.*, self.graph);
-                        self.pq_moves.update(MinHashEntry.fromKey(unique_key), ent) catch {};
+                        //const ent = MinHashEntry.from(T, unique_key, pt.*, self.graph);
+                        //self.pq_moves.update(MinHashEntry.fromKey(unique_key), ent) catch {};
                     } else {
                         self.hit_map.put(self.allocator, unique_key, 1) catch @panic("Out of memory!");
                         self.pq_moves.add(MinHashEntry.from(T, unique_key, 1, self.graph)) catch @panic("Out of memory!");
@@ -464,10 +464,6 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             for (0..split) |index| {
                 const result = try self.bands[index].removeItem(node);
                 Self.removedCallback(self, node, result);
-            }
-            for (split..self.bands.len / 2) |index| {
-                const result = try self.bands[index].removeItem(node);
-                Self.removedCallbackRed(self, node, result);
             }
         }
 
@@ -490,7 +486,8 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             }
         }
 
-        pub fn bootstrapNodes(self: *Self, nodes: []T, graph: *graph_mod.Graph(T)) !void {
+        pub fn bootstrapNodes(self: *Self, nodes: []T, graph: *graph_mod.Graph(T), seed: u64) !void {
+						MinHash.permutate(self.permutation,seed);
             self.graph = graph;
             for (0..self.bands.len) |j| {
                 self.bands[j].clear();
@@ -555,7 +552,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             self.sim_nodes.clearRetainingCapacity();
 
             var best_tww = graph_mod.Graph(T).InducedTwinWidthPotential.default();
-            var collect_1k = try std.BoundedArray(MinHashEntry, 10_000).init(0);
+            var collect_1k = try std.BoundedArray(MinHashEntry, 100).init(0);
 
             while (self.pq_moves.removeOrNull()) |item| {
                 const mv = MinHashEntry.keyIntoMove(T, item.key, self.number_of_nodes);
@@ -569,37 +566,11 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
                     try collect_1k.append(item);
                     try self.sim_nodes.put(self.allocator, item.key, {});
-                    if (collect_1k.len == 10_000) break;
+                    if (collect_1k.len == 100) break;
                 }
             }
 
-            var collect_2 = try std.BoundedArray(SmallDegreeNode, 6).init(0);
-            while (self.pq_move_small.removeOrNull()) |item| {
-                if (graph.erased_nodes.get(item.id)) continue;
-                if (graph.node_list[item.id].cardinality() != item.cardinality) {
-                    try self.pq_move_small.add(SmallDegreeNode{
-                        .id = item.id,
-                        .cardinality = graph.node_list[item.id].cardinality(),
-                    });
-                    continue;
-                }
-                try collect_2.append(item);
-                if (collect_2.len == 6) break;
-            }
 
-            for (collect_2.buffer[0..collect_2.len]) |item1| {
-                for (collect_2.buffer[0..collect_2.len]) |item2| {
-                    if (item1.id == item2.id) continue;
-                    var tww = graph.calculateInducedTwwPotential(@intCast(T, item1.id), @intCast(T, item2.id), &best_tww, current_tww);
-
-                    if (tww.isLess(best_tww, current_tww)) {
-                        min_cont = .{ .erased = @intCast(T, item1.id), .survivor = @intCast(T, item2.id) };
-                        best_tww = tww;
-                    }
-                }
-            }
-
-            try self.pq_move_small.addSlice(collect_2.buffer[0..collect_2.len]);
 
             for (collect_1k.buffer[0..collect_1k.len]) |*it| {
                 const mv = MinHashEntry.keyIntoMove(T, it.key, self.number_of_nodes);
@@ -615,20 +586,17 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
             if (min_cont != null) {
                 //std.debug.print("Best move tww {} and current tww {}\n",.{best_tww.tww,current_tww});
-            } else {
-                std.debug.print("No move\n", .{});
             }
             return min_cont;
         }
 
-        pub fn init(allocator: std.mem.Allocator, num_bands: u32, seed: u64, number_of_nodes: u32) !Self {
+        pub fn init(allocator: std.mem.Allocator, num_bands: u32, number_of_nodes: u32) !Self {
             var bands = try allocator.alloc(MinHashBand(B), num_bands);
-            var permutation = try MinHash.generatePermutation(allocator, number_of_nodes * num_bands * 2, seed);
-            const shift: u32 = 0;
+            var permutation = try MinHash.generatePermutation(allocator, number_of_nodes * num_bands * 2);
             var counter: u32 = 0;
             for (bands) |*band| {
-                band.* = try MinHashBand(B).init(allocator, number_of_nodes, permutation[counter..(counter + number_of_nodes)], shift);
-                counter += number_of_nodes;
+                band.* = try MinHashBand(B).init(allocator, number_of_nodes, permutation[counter..(counter + 2*number_of_nodes)]);
+                counter += number_of_nodes*2;
             }
 
             var hit_map = std.AutoHashMapUnmanaged(u64, u32){};
@@ -638,7 +606,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             var pq = std.PriorityQueue(MinHashEntry, void, MinHashEntry.compare).init(allocator, {});
             var pq_small = std.PriorityQueue(SmallDegreeNode, void, SmallDegreeNode.compare).init(allocator, {});
 
-            return Self{ .bands = bands, .permutation = permutation, .shift = shift, .hit_map = hit_map, .sim_nodes = sim_nodes, .allocator = allocator, .number_of_nodes = number_of_nodes, .pq_moves = pq, .graph = undefined, .pq_move_small = pq_small, .sim_nodes_after = sim_nodes_after };
+            return Self{ .bands = bands, .permutation = permutation, .hit_map = hit_map, .sim_nodes = sim_nodes, .allocator = allocator, .number_of_nodes = number_of_nodes, .pq_moves = pq, .graph = undefined, .pq_move_small = pq_small, .sim_nodes_after = sim_nodes_after };
         }
     };
 }

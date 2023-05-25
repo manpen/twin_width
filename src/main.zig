@@ -100,7 +100,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    const target_directory = "instances/heuristic-public";
+    const target_directory = "instances/exact-public";
 
     var allocator = gpa.allocator();
     std.debug.print("{s:<25} | {s:>8} | {s:>8} | {s:>8} | {s:>6}\n", .{ "filename", "nodes", "edges", "tww", "time (ms)" });

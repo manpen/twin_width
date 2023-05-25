@@ -72,7 +72,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 5),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 4),
 
         // Usually the exact tries to find a solution that is strictly better than
         // the heuristic one (oftentimes only proving a lower bound). If set to true,
@@ -588,6 +588,7 @@ pub fn Graph(comptime T: type) type {
 
             var new_red_edges: i32 = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
+						var before_red_card = self.node_list[survivor].red_edges.cardinality();
 
             // Intuition is as following:
             // New red edges to nodes with a lot of red edges should decrease
@@ -595,8 +596,6 @@ pub fn Graph(comptime T: type) type {
 
             while (red_iter.next()) |item| {
                 if (item == survivor) {
-                    //red_potential -= self.node_list[survivor].red_edges.cardinality();
-                    //new_red_edges-=1;
                     continue;
                 }
 
@@ -604,7 +603,7 @@ pub fn Graph(comptime T: type) type {
                     delta_red += 1;
                 } else {
                     // We destroyed a red edge update potential
-                    red_potential -= self.node_list[item].red_edges.cardinality();
+                    red_potential -= (self.node_list[item].red_edges.cardinality()*self.node_list[item].red_edges.cardinality());
                     new_red_edges -= 1;
                 }
             }
@@ -623,7 +622,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[survivor].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                        red_potential += self.node_list[item].red_edges.cardinality() + 1;
+                    		red_potential += ((self.node_list[item].red_edges.cardinality()+1)*(self.node_list[item].red_edges.cardinality()+1));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -632,7 +631,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[erased].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                        red_potential += self.node_list[item].red_edges.cardinality() + 1;
+                    		red_potential += ((self.node_list[item].red_edges.cardinality()+1)*(self.node_list[item].red_edges.cardinality()+1));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -642,6 +641,18 @@ pub fn Graph(comptime T: type) type {
                     return current;
                 }
             }
+
+						if(before_red_card < delta_red) {
+							// replace by small gaussian
+							for(before_red_card+1..delta_red+1) |c| {
+                red_potential += (@intCast(i32,c*c));
+							}
+						}
+						else {
+							for(delta_red+1..before_red_card+1) |c| {
+                red_potential -= (@intCast(i32,c*c));
+							}
+						}
 
             tww = std.math.max(tww, delta_red);
             return InducedTwinWidthPotential{ .tww = tww, .cumulative_red_edges = red_potential, .delta_red_edges = new_red_edges };
@@ -982,10 +993,6 @@ pub fn Graph(comptime T: type) type {
             try self.min_hash.rehashNode(survivor, self);
             try self.min_hash.removeNode(erased);
 
-						var iter = self.node_list[survivor].unorderedIterator();
-						while(iter.next()) |item| {
-							try self.min_hash.updatedNode(item,self);
-						}
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
             try seq.addContraction(self.allocator, erased, survivor, std.math.max(tww, seq.getTwinWidth()));
@@ -1145,6 +1152,7 @@ pub fn Graph(comptime T: type) type {
                 node.red_edges = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).init(number_of_nodes);
                 node.high_degree_node = null;
                 node.num_leafes = 0;
+								node.red_weight_neighbors = 0;
             }
 
             //TODO: Add some errdefer's here
@@ -1184,6 +1192,7 @@ pub fn Graph(comptime T: type) type {
                 node_list[index].red_edges = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).init(@intCast(T, pace.number_of_nodes));
                 node_list[index].high_degree_node = null;
                 node_list[index].num_leafes = 0;
+								node_list[index].red_weight_neighbors = 0;
             }
 
             for (0..pace.number_of_nodes) |index| {
@@ -1223,7 +1232,7 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 5).init(graph_instance.allocator, 12, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 60, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
 
             return graph_instance;

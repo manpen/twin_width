@@ -40,6 +40,11 @@ pub fn InducedSubGraph(comptime T: type) type {
             target: T,
         };
 
+				pub const TargetMinimalInducedTwwScorer = struct {
+            potential: Graph(T).TwwScorer,
+            target: T,
+        };
+
         pub fn compareNodeDegrees(ctx: *const Graph(T), lhs: T, rhs: T) std.math.Order {
             return std.math.order(ctx.node_list[rhs].cardinality(), ctx.node_list[lhs].cardinality());
         }
@@ -59,6 +64,23 @@ pub fn InducedSubGraph(comptime T: type) type {
                 }
             }
             return TargetMinimalInducedTww{ .potential = induced_tww, .target = min_target };
+        }
+
+        pub inline fn selectBestMoveOfIterFewRedEdges(self: *Self, comptime Iter: type, iter: *Iter, first_node: T, current_tww: T) TargetMinimalInducedTwwScorer {
+            var induced_tww = Graph(T).TwwScorer.default();
+            var min_target: T = 0;
+            while (iter.next()) |item| {
+                if (item == first_node) continue;
+                if (self.graph.erased_nodes.get(item)) continue;
+
+                const cal_induced_tww = self.graph.calculateMaxTwwScore(item, first_node);
+
+                if (cal_induced_tww.isLess(&induced_tww, current_tww)) {
+                    induced_tww = cal_induced_tww;
+                    min_target = item;
+                }
+            }
+            return TargetMinimalInducedTwwScorer{ .potential = induced_tww, .target = min_target };
         }
 
         pub inline fn selectBestMoveIncremental(self: *Self, comptime K: u32, comptime P: u32, first_node: T, solver: *solver_resources.SolverResources(T, K, P), current_tww: T, first_level_merge: bool, erased: T, red_edges_erased: []T) !TargetMinimalInducedTww {
@@ -85,6 +107,21 @@ pub fn InducedSubGraph(comptime T: type) type {
             var iterator = try solver.scorer.iterator(self.graph);
 
             const result = self.selectBestMoveOfIter(@TypeOf(iterator), &iterator, first_node, current_tww);
+
+            if (result.potential.cumulative_red_edges == std.math.maxInt(i64)) {
+                @panic("Error cannot find contraction partner!");
+            }
+
+            return result;
+        }
+
+
+        pub inline fn selectBestMoveFewRedEdges(self: *Self, comptime K: u32, comptime P: u32, first_node: T, solver: *solver_resources.SolverResources(T, K, P), current_tww: T) !TargetMinimalInducedTwwScorer {
+            bfs_mod.bfs_topk_high_performance(T, K, first_node, self.graph, &solver.scratch_bitset, &solver.scorer);
+
+            var iterator = try solver.scorer.iterator(self.graph);
+
+            const result = self.selectBestMoveOfIterFewRedEdges(@TypeOf(iterator), &iterator, first_node, current_tww);
 
             if (result.potential.cumulative_red_edges == std.math.maxInt(i64)) {
                 @panic("Error cannot find contraction partner!");
@@ -897,6 +934,9 @@ pub fn InducedSubGraph(comptime T: type) type {
 
             var enable_follow_up_merge: bool = true;
 
+						const threshold_potential = 2*solver.priority_queue.priority_queue.len/3;
+						_ = threshold_potential;
+
             while (contractions_left > exhaustive_solving_thresh) {
                 var prio_item = try solver.priority_queue.removeNext(total_tww);
                 var first_node = prio_item;
@@ -947,13 +987,13 @@ pub fn InducedSubGraph(comptime T: type) type {
                 // Reset all variables which were set to select the best postponed move
 
 								var used_min_hash_move:bool = false;
-                if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
-                	const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
-                	if(t.isLess(selection.potential,seq.getTwinWidth())) {
-                		min_contraction = best;
+								if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
+									const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
+									if(t.isLess(selection.potential,seq.getTwinWidth())) {
+										min_contraction = best;
 										used_min_hash_move = true;
-                	}
-                }
+									}
+								}
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
 

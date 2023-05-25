@@ -57,6 +57,8 @@ pub fn ConnectedComponent(comptime T: type) type {
         backup_contraction_slice: []u32,
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            allocator.free(self.backup_contraction_slice);
+            allocator.free(self.contraction_slice);
             self.best_contraction_sequence.deinit(allocator);
             self.current_contraction_seq.deinit(allocator);
         }

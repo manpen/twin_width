@@ -80,7 +80,9 @@ pub fn BfsQueue(comptime T: type) type {
         next_write_ptr: u32,
         pub inline fn init(allocator: std.mem.Allocator, graph_size: u32) !BfsQueue(T) {
             const current = try allocator.alloc(T, graph_size);
+            errdefer allocator.free(current);
             const next = try allocator.alloc(T, graph_size);
+            errdefer allocator.free(next);
             return .{
                 .current = current,
                 .next = next,

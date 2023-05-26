@@ -9,6 +9,7 @@ const expectError = testing.expectError;
 
 pub fn UpdateablePriorityQueueNode(comptime T: type, comptime P: type) type {
     return struct {
+        const Self = @This();
         key: T,
         priority: P,
 

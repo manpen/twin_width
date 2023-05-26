@@ -72,7 +72,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 4),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 5),
 
         // Usually the exact tries to find a solution that is strictly better than
         // the heuristic one (oftentimes only proving a lower bound). If set to true,
@@ -603,7 +603,7 @@ pub fn Graph(comptime T: type) type {
                     delta_red += 1;
                 } else {
                     // We destroyed a red edge update potential
-                    red_potential -= (self.node_list[item].red_edges.cardinality()*self.node_list[item].red_edges.cardinality());
+                    red_potential -= (@intCast(i64,self.node_list[item].red_edges.cardinality())*@intCast(i64,self.node_list[item].red_edges.cardinality()));
                     new_red_edges -= 1;
                 }
             }
@@ -622,7 +622,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[survivor].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                    		red_potential += ((self.node_list[item].red_edges.cardinality()+1)*(self.node_list[item].red_edges.cardinality()+1));
+                    		red_potential += (@intCast(i64,(self.node_list[item].red_edges.cardinality()+1))*@intCast(i64,(self.node_list[item].red_edges.cardinality()+1)));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -631,7 +631,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[erased].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                    		red_potential += ((self.node_list[item].red_edges.cardinality()+1)*(self.node_list[item].red_edges.cardinality()+1));
+                    		red_potential += (@intCast(i64,(self.node_list[item].red_edges.cardinality()+1))*@intCast(i64,(self.node_list[item].red_edges.cardinality()+1)));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -645,12 +645,12 @@ pub fn Graph(comptime T: type) type {
 						if(before_red_card < delta_red) {
 							// replace by small gaussian
 							for(before_red_card+1..delta_red+1) |c| {
-                red_potential += (@intCast(i32,c*c));
+                red_potential += (@intCast(i64,c*c));
 							}
 						}
 						else {
 							for(delta_red+1..before_red_card+1) |c| {
-                red_potential -= (@intCast(i32,c*c));
+                red_potential -= (@intCast(i64,c*c));
 							}
 						}
 
@@ -910,12 +910,12 @@ pub fn Graph(comptime T: type) type {
                     if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
                         self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
-                        try self.min_hash.changedEdge(item, erased, true, survivor, true, self);
+                        try self.min_hash.changedEdge(item, self, .{.removed = erased,.red=true, .added = survivor,.added_red=true});
                     } else {
                         // Inform about the removal of the red edge
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).redToDeleted(item));
-                        try self.min_hash.changedEdge(item, erased, true, null, true, self);
-                    }
+                        try self.min_hash.changedEdge(item, self, .{.removed = erased,.red=true});
+                  }
                 } else {
                     self.last_merge_first_level_merge = true;
                 }
@@ -941,10 +941,10 @@ pub fn Graph(comptime T: type) type {
 
                         self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
                         //self.min_hash.addTransferedEdge(item,true,false);
-                        try self.min_hash.changedEdge(item, erased, false, survivor, true, self);
+                        try self.min_hash.changedEdge(item, self, .{.removed = erased,.red=false, .added = survivor, .added_red = true});
                     } else {
-                        try self.min_hash.changedEdge(item, erased, false, null, true, self);
-                    }
+                        try self.min_hash.changedEdge(item, self, .{.removed = erased,.red=false});
+                	}
                 }
                 // Came from survivor
                 else {
@@ -953,11 +953,11 @@ pub fn Graph(comptime T: type) type {
 
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).blackToDeleted(item));
 
-                        try self.min_hash.changedEdge(item, survivor, false, null, true, self);
+                        try self.min_hash.changedEdge(item, self, .{.removed = survivor,.red=false});
                     } else {
                         // Did not exist therefore turned
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).blackToRedOwn(item));
-                        try self.min_hash.changedEdge(item, survivor, false, survivor, true, self);
+                        try self.min_hash.changedEdge(item, self, .{.removed = survivor,.red=false, .added= survivor, .added_red = true});
                     }
                     try self.node_list[item].addRedEdge(self.allocator, survivor);
 
@@ -981,7 +981,7 @@ pub fn Graph(comptime T: type) type {
 
             var black_iter_sur = self.node_list[survivor].black_edges.iterator();
             while (black_iter_sur.next()) |t| {
-                try self.min_hash.changedEdge(t, erased, false, null, true, self);
+                try self.min_hash.changedEdge(t, self, .{.removed = erased,.red=false});
             }
 
             //try self.min_hash.batchUpdateRehashNodes(erased,survivor,self);
@@ -1152,7 +1152,6 @@ pub fn Graph(comptime T: type) type {
                 node.red_edges = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).init(number_of_nodes);
                 node.high_degree_node = null;
                 node.num_leafes = 0;
-								node.red_weight_neighbors = 0;
             }
 
             //TODO: Add some errdefer's here
@@ -1192,7 +1191,6 @@ pub fn Graph(comptime T: type) type {
                 node_list[index].red_edges = compressed_bitset.FastCompressedBitmap(T, promote_thresh, degrade_tresh).init(@intCast(T, pace.number_of_nodes));
                 node_list[index].high_degree_node = null;
                 node_list[index].num_leafes = 0;
-								node_list[index].red_weight_neighbors = 0;
             }
 
             for (0..pace.number_of_nodes) |index| {
@@ -1208,6 +1206,8 @@ pub fn Graph(comptime T: type) type {
                     node.black_edges.deinit(allocator);
                     node.red_edges.deinit(allocator);
                     node.high_degree_node = null;
+										node.total_weight = @intToFloat(f32,node.cardinality());
+										node.delta_potential_weighted_jaccard = 0.0;
                 }
                 allocator.free(node_list);
             }
@@ -1232,7 +1232,7 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 60, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 5).init(graph_instance.allocator, 48, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
 
             return graph_instance;

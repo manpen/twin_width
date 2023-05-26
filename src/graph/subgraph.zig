@@ -881,12 +881,14 @@ pub fn InducedSubGraph(comptime T: type) type {
         }
 
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), find_articulation_points: bool, seed: u64) !T {
+            _ = seed;
             _ = find_articulation_points;
             // Use once at the beginning later we will only consider merges which involve the survivor of the last merge
             // Paths might be dangerous
             try self.reduceLeafesAndPaths(K, P, seq, solver, false);
 
-            try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph, seed);
+            try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
+						std.debug.print("Bootstrapping done\n",.{});
 
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();

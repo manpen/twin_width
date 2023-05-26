@@ -102,6 +102,10 @@ pub fn ParametrizedSortedArrayList(comptime T: type) type {
         pub const ParametrizedSortedArrayListIterator = struct {
             index: u32,
             list: *const Self,
+						pub inline fn reset(self: *ParametrizedSortedArrayListIterator) void {
+							self.index = 0;
+						}
+
             pub inline fn next(self: *ParametrizedSortedArrayListIterator) ?T {
                 if (self.index >= self.list.edges.items.len) return null;
                 const item = self.list.edges.items[self.index];

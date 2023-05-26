@@ -62,14 +62,14 @@ const FeaturePruneGeneralizedTwins: bool = FeaturePruning and true;
 const FeaturePruneBlackCCs: bool = FeaturePruning and true;
 
 const FeatureComplements: bool = false; // BROKEN
-const FeatureOuterPathPruning: bool = FeaturePruning and true; // BROKEN
+const FeatureOuterPathPruning: bool = FeaturePruning and true;
 
 const FeatureTryLBFirst: bool = true;
 
 const BudgetHeuCSLB: u64 = 0; // ms
-const BudgetSubgraphLB: u64 = 20_000; // ms
+const BudgetSubgraphLB: u64 = 10_000; // ms
 const BudgetPruningLB: u64 = 0; // ms
-const BudgetAdvSubgraphLB: u64 = 0; // ms
+const BudgetAdvSubgraphLB: u64 = 0 * 20_000; // ms
 
 const SolSummary = struct {
     tww: Node,
@@ -90,6 +90,7 @@ pub const ExactBranchAndBound = struct {
     best_seq: std.ArrayList(Contraction),
 
     num_calls: u64,
+    num_cache_hits: u64,
     recursion_depth: usize,
 
     smallest_depth_last_report: usize,
@@ -105,6 +106,8 @@ pub const ExactBranchAndBound = struct {
     lower_bound_mode: bool,
     rng: ?*std.rand.DefaultPrng,
     silent: bool,
+
+    single_pass: bool,
 
     pub fn new(allocator: std.mem.Allocator, number_of_nodes: Node) !Self {
         assert(number_of_nodes > 0);
@@ -140,6 +143,7 @@ pub const ExactBranchAndBound = struct {
             .working_seq = working_seq,
             .best_seq = best_seq,
             .num_calls = 0,
+            .num_cache_hits = 0,
             .recursion_depth = 0,
             .time_last_report = now,
             .smallest_depth_last_report = 0,
@@ -151,6 +155,7 @@ pub const ExactBranchAndBound = struct {
             .lower_bound_mode = false,
             .rng = null,
             .silent = false,
+            .single_pass = false,
         };
 
         return solver;
@@ -342,7 +347,7 @@ pub const ExactBranchAndBound = struct {
         }
 
         var digest: mg.Digest = undefined;
-        if (FeatureUseInfeasibleCache or FeatureUseSolutionCache) {
+        if ((FeatureUseInfeasibleCache or FeatureUseSolutionCache) and !self.single_pass) {
             if (FeatureUseWFHash) {
                 digest = graph.hashWF();
             } else {
@@ -350,11 +355,13 @@ pub const ExactBranchAndBound = struct {
             }
 
             if (self.infeasible_cache.contains(digest)) {
+                self.num_cache_hits += 1;
                 return SolverError.Infeasable;
             }
 
             if (self.solution_cache.get(digest)) |sol| {
                 if (sol.tww < self.upper_excl) {
+                    self.num_cache_hits += 1;
                     return sol.tww;
                 }
 
@@ -375,7 +382,7 @@ pub const ExactBranchAndBound = struct {
             try self.infeasible_cache.put(digest, {});
         }
 
-        if (FeatureUseSolutionCache) {
+        if (FeatureUseSolutionCache and digest != null) {
             if (result) |tww| {
                 try self.solution_cache.put(digest, SolSummary{ .slack = slack, .tww = tww });
             } else |_| {}
@@ -805,7 +812,9 @@ fn Frame(comptime Graph: type) type {
 
             var iter = self.work_graph.has_neighbors.iter_set();
             var sur = iter.next().?;
-            std.debug.print("Collaps tiny graph with n={d} tww={d}\n", .{ self.work_graph.has_neighbors.cardinality(), self.work_tww });
+            if (!self.context.silent) {
+                std.debug.print("Collaps tiny graph with n={d} tww={d}\n", .{ self.work_graph.has_neighbors.cardinality(), self.work_tww });
+            }
 
             while (iter.next()) |rem| {
                 self.work_graph.removeEdgesAtNode(rem);
@@ -977,7 +986,9 @@ fn Frame(comptime Graph: type) type {
 
         fn registerSolution(self: *Self) void {
             assert(self.context.upper_excl > self.work_tww);
-            std.debug.print("Found a solution with tww={d}\n", .{self.work_tww});
+            if (!self.context.silent) {
+                std.debug.print("Found a solution with tww={d}\n", .{self.work_tww});
+            }
 
             self.context.upper_excl = self.work_tww;
             self.context.best_seq.clearRetainingCapacity();
@@ -1249,7 +1260,7 @@ pub fn findLowerBoundSubgraph(comptime N: u32, input_graph: *const mg.MatrixGrap
             nodes.assignOr(&frontier);
         }
 
-        lower_bound = subgraphLB(N, allocator, &graph, &nodes, budget_ms / 5, lower_bound, upper) catch continue;
+        lower_bound = subgraphLB(N, allocator, &graph, &nodes, budget_ms / 2, lower_bound, upper) catch continue;
     }
 
     return lower_bound;
@@ -1556,6 +1567,7 @@ fn subgraphLB(comptime N: u32, allocator: std.mem.Allocator, graph: *const mg.Ma
     solver.setLowerBound(lower);
     solver.setUpperBound(upper);
     solver.setTimeout(budget_ms);
+    solver.silent = true;
 
     var tww = solver.solve(Graph, &local_graph, 0) catch |e| blk: {
         if (e == SolverError.Infeasable) {
@@ -1586,7 +1598,7 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
 
     var lower = context.lower;
     if (FeatureTryLBFirst) {
-        var boost: u64 = if (graph.has_neighbors.cardinality() > 120) 20 else 1;
+        var boost: u64 = 1;
 
         if (BudgetHeuCSLB > 0) {
             var inner_cs = context.allocator.alloc(Contraction, cs.list.len) catch return;
@@ -1642,12 +1654,21 @@ fn solveCCExactlyHandler(context: anytype, graph: anytype, mapping: anytype) voi
     solver.setUpperBound(context.upper);
 
     var tww = solver.solve(@TypeOf(graph), &graph, 0) catch |e| {
+        std.debug.print("Iterations: {d} Cache-Hits: {d} ({d:.1} %)", .{
+            solver.num_calls, //
+            solver.num_cache_hits,
+            100.0 * @intToFloat(f64, solver.num_cache_hits) / @intToFloat(f64, solver.num_calls),
+        });
         std.debug.print("Catch {!}\n", .{e});
         context.result = e;
         return;
     };
 
-    std.debug.print("Nodes: {d} CS: {d}", .{ graph.has_neighbors.cardinality(), solver.best_seq.items.len });
+    std.debug.print("Iterations: {d} Cache-Hits: {d} ({d:.1} %)\n", .{
+        solver.num_calls, //
+        solver.num_cache_hits,
+        100.0 * @intToFloat(f64, solver.num_cache_hits) / @intToFloat(f64, solver.num_calls),
+    });
 
     context.result = tww;
 

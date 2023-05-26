@@ -96,7 +96,7 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
     }
 
     if (best_known == null) {
-        best_known = try load_best_known(short_name);
+        best_known = load_best_known(short_name) catch null;
     }
 
     const tww = loaded_graph.solveExact() catch |err| {
@@ -121,12 +121,12 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
     }
 
     std.debug.print("{s:<25} | {:>8} | {:>8} | {:>4} {c} {?:>4} | {:>6}ms ({:>3} min)\n", .{ short_name, loaded_graph.number_of_nodes, loaded_graph.number_of_edges, tww, cmp, best_known, elapsed, elapsed / 60_000 });
+    try loaded_graph.contraction.writeSolution(formatted);
+    std.debug.print("Wrote solution to {s}\n", .{formatted});
 
     if (best_known) |value| {
         if (tww > value) {
             std.debug.print("FAILED: {s}\n", .{filename});
-            try loaded_graph.contraction.writeSolution(formatted);
-            std.debug.print("Wrote solution to {s}\n", .{formatted});
             @panic("INVALID SOLUTION");
         }
         std.debug.assert(tww <= value);
@@ -166,10 +166,6 @@ pub fn main() !void {
 
     var allocator = gpa.allocator();
 
-    var dirIter = try std.fs.cwd().openIterableDir(target_directory, .{});
-    defer dirIter.close();
-    var dirit = dirIter.iterate();
-
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
@@ -179,6 +175,10 @@ pub fn main() !void {
     }
 
     std.debug.print("{s:<25} | {s:>8} | {s:>8} | {s:>4} {s} {s:>4} | {s:>6}\n", .{ "filename", "nodes", "edges", "tww", "?", "best", "time (ms)" });
+
+    var dirIter = try std.fs.cwd().openIterableDir(target_directory, .{});
+    defer dirIter.close();
+    var dirit = dirIter.iterate();
 
     var file_list = try std.ArrayListUnmanaged([]u8).initCapacity(allocator, 100);
     while (try dirit.next()) |item| {

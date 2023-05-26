@@ -115,9 +115,17 @@ pub fn main() !void {
     var hpa_allocator = std.heap.FixedBufferAllocator.init(large_buffer);
     var hpa = hpa_allocator.allocator();
 
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len > 1) {
+        _ = try initial_solver(hpa, args[1], args[1]);
+        return;
+    }
+
     // HARD COLLECTION
     // SOLVABLE!
-    //try initial_solver("instances/heuristic-public/heuristic_034.gr","heuristic_034.gr",&fixed_alloc);
+    //try initial_solver("instances/heuristic-public/heuristic_034.gr", "heuristic_034.gr", &fixed_alloc);
     //try initial_solver("instances/heuristic-public/heuristic_052.gr","heuristic_052.gr",&fixed_alloc);
     //try initial_solver("instances/heuristic-public/heuristic_112.gr","heuristic_112.gr",&fixed_alloc);
     //try initial_solver("instances/heuristic-public/heuristic_138.gr","heuristic_138.gr",&fixed_alloc);

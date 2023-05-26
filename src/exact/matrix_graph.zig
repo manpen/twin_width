@@ -486,9 +486,9 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
         fn murmur64(input: u64) u64 {
             var h = input;
             h ^= h >> 33;
-            h = @mulWithOverflow(h, 0xff51afd7ed558ccd)[0];
+            h +%= 0xff51afd7ed558ccd;
             h ^= h >> 33;
-            h = @mulWithOverflow(h, 0xc4ceb9fe1a85ec53)[0];
+            h +%= 0xc4ceb9fe1a85ec53;
             h ^= h >> 33;
             return h;
         }

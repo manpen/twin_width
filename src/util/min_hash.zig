@@ -627,6 +627,9 @@ pub fn MinHashBand(comptime B: u32) type {
 
         pub inline fn init(allocator: std.mem.Allocator, cache_size: u32) !Self {
             var hashes = try allocator.alloc(MinHash, B);
+            for (hashes) |*h| {
+                h.* = MinHash.invalid();
+            }
 
             var collisions = std.HashMapUnmanaged([]u32, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContext, 80){};
 
@@ -776,9 +779,9 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             }
         };
 
-        pub inline fn keyIntoMove(key: u64, number_of_nodes: u32) contraction.Contraction(T) {
-            var first = key / number_of_nodes;
-            var second = key % number_of_nodes;
+        pub inline fn keyIntoMove(key: u64) contraction.Contraction(T) {
+            var first = @intCast(u32, key >> 32); // / number_of_nodes;
+            var second = @truncate(u32, key);
             return contraction.Contraction(T){ .erased = @intCast(T, first), .survivor = @intCast(T, second) };
         }
 
@@ -793,9 +796,12 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             }
         };
 
-        pub inline fn calculateUniqueKey(a: u32, b: u32, number_of_nodes: u32) u64 {
-            if (a < b) return @intCast(u64, b) * number_of_nodes + @intCast(u64, a);
-            return @intCast(u64, a) * number_of_nodes + @intCast(u64, b);
+        pub inline fn calculateUniqueKey(a: u32, b: u32) u64 {
+            if (a < b) {
+                return (@intCast(u64, b) << 32) | a;
+            } else {
+                return (@intCast(u64, a) << 32) | b;
+            }
         }
 
         fn removedCallback(self: *Self, key: u32, list: ?*std.AutoArrayHashMapUnmanaged(u32, void)) void {
@@ -804,7 +810,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                 while (iter.next()) |partner_ptr| {
                     const partner = partner_ptr.key_ptr.*;
                     if (partner == key) continue;
-                    const unique_key = Self.calculateUniqueKey(partner, key, self.number_of_nodes);
+                    const unique_key = Self.calculateUniqueKey(partner, key);
                     if (self.hit_map.getPtr(unique_key)) |pt| {
                         _ = self.similarity_cardinality[pt.* - 1].swapRemove(unique_key);
                         pt.* -= 1;
@@ -831,7 +837,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                 while (iter.next()) |partner_ptr| {
                     const partner = partner_ptr.key_ptr.*;
                     if (partner == key) continue;
-                    const unique_key = Self.calculateUniqueKey(partner, key, self.number_of_nodes);
+                    const unique_key = Self.calculateUniqueKey(partner, key);
                     if (self.hit_map.getPtr(unique_key)) |pt| {
                         _ = self.similarity_cardinality[pt.* - 1].swapRemove(unique_key);
                         pt.* += 1;
@@ -848,7 +854,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         }
 
         fn trackNodePair(self: *Self, erased: u32, survivor: u32) !void {
-            var unique_key = Self.calculateUniqueKey(erased, survivor, self.number_of_nodes);
+            var unique_key = Self.calculateUniqueKey(erased, survivor);
             if (!self.tww_nb.contains(unique_key)) {
                 //var tww = self.graph.calculateMaxTwwScore(@intCast(T, erased), @intCast(T, survivor));
                 try self.tww_nb.put(self.allocator, unique_key, 0);
@@ -856,7 +862,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         }
 
         fn untrackNodePair(self: *Self, erased: u32, survivor: u32) !void {
-            const key = Self.calculateUniqueKey(erased, survivor, self.number_of_nodes);
+            const key = Self.calculateUniqueKey(erased, survivor);
             _ = self.tww_nb.swapRemove(key);
         }
 
@@ -948,7 +954,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                         while (iterator.next()) |hit_pt| {
                             const hit = hit_pt.key_ptr.*;
                             if (hit != i) {
-                                const key = Self.calculateUniqueKey(@intCast(u32, i), hit, graph.number_of_nodes);
+                                const key = Self.calculateUniqueKey(@intCast(u32, i), hit);
                                 if (self.hit_map.getPtr(key)) |it| {
                                     it.* += 1;
                                 } else {
@@ -966,7 +972,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                         while (iterator.next()) |hit_pt| {
                             const hit = hit_pt.key_ptr.*;
                             if (hit != i) {
-                                const key = Self.calculateUniqueKey(@intCast(u32, i), hit, graph.number_of_nodes);
+                                const key = Self.calculateUniqueKey(@intCast(u32, i), hit);
                                 if (self.hit_map.getPtr(key)) |it| {
                                     it.* += 1;
                                 } else {
@@ -984,7 +990,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                         while (iterator.next()) |hit_pt| {
                             const hit = hit_pt.key_ptr.*;
                             if (hit != i) {
-                                const key = Self.calculateUniqueKey(@intCast(u32, i), hit, graph.number_of_nodes);
+                                const key = Self.calculateUniqueKey(@intCast(u32, i), hit);
                                 if (self.hit_map.getPtr(key)) |it| {
                                     it.* += 1;
                                 } else {
@@ -1015,7 +1021,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                 var iter = self.similarity_cardinality[index].iterator();
                 while (iter.next()) |it| {
                     if (self.tww_nb.count() > Self.CANIDATE_COUNT) break;
-                    const mv = Self.keyIntoMove(it.key_ptr.*, graph.number_of_nodes);
+                    const mv = Self.keyIntoMove(it.key_ptr.*);
                     try self.trackNodePair(mv.erased, mv.survivor);
                 }
             }
@@ -1024,11 +1030,16 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         pub fn getBestMove(self: *Self, graph: *graph_mod.Graph(T), current_tww: T) !?contraction.Contraction(T) {
             var min_cont: ?contraction.Contraction(T) = null;
 
-            var iternb = self.tww_nb.iterator();
-            while (iternb.next()) |it| {
-                const mv = Self.keyIntoMove(it.key_ptr.*, graph.number_of_nodes);
-                if (graph.erased_nodes.get(mv.erased) or graph.erased_nodes.get(mv.survivor)) {
-                    _ = self.tww_nb.swapRemove(it.key_ptr.*);
+            {
+                var i: usize = 0;
+                while (i < self.tww_nb.count()) {
+                    const key = self.tww_nb.keys()[i];
+                    const mv = Self.keyIntoMove(key);
+                    if (graph.erased_nodes.get(mv.erased) or graph.erased_nodes.get(mv.survivor)) {
+                        _ = self.tww_nb.swapRemove(key);
+                    } else {
+                        i += 1;
+                    }
                 }
             }
 
@@ -1039,7 +1050,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                 var iter = self.similarity_cardinality[index].iterator();
                 while (iter.next()) |it| {
                     if (self.tww_nb.count() >= Self.CANIDATE_COUNT) break :outer;
-                    const mv = Self.keyIntoMove(it.key_ptr.*, graph.number_of_nodes);
+                    const mv = Self.keyIntoMove(it.key_ptr.*);
                     try self.trackNodePair(mv.erased, mv.survivor);
                 }
             }
@@ -1051,7 +1062,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             var best_tww = graph_mod.Graph(T).InducedTwinWidthPotential.default();
             var iter = self.tww_nb.iterator();
             while (iter.next()) |it| {
-                const mv = Self.keyIntoMove(it.key_ptr.*, self.number_of_nodes);
+                const mv = Self.keyIntoMove(it.key_ptr.*);
                 if (graph.erased_nodes.get(mv.erased) or graph.erased_nodes.get(mv.survivor)) {
                     continue;
                 }

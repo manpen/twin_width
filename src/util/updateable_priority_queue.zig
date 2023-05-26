@@ -160,7 +160,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
                 self.heap[child_index] = parent;
 
                 self.id_to_heap_pos[child_key] = parent_index;
-                self.id_to_heap_pos[parent_index] = child_index;
+                self.id_to_heap_pos[parent_key] = child_index;
                 
                 child_index = parent_index;
             }

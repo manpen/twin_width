@@ -68,7 +68,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
         }
 
         pub fn removeKey(self: *Self, key: T) ?UpdateablePriorityQueueNode {
-            if (self.empty() || self.key >= self.id_to_heap_pos.len || self.id_to_heap_pos[key]==self.NULL) {
+            if ((self.empty()) || (self.key >= self.id_to_heap_pos.len) || (self.id_to_heap_pos[key]==self.NULL)) {
                 return null;
             } else {
                 return self.removeAtHeapIdx(self.id_to_heap_pos[key]);
@@ -120,7 +120,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
 
         pub fn updateOrInsert(self: *Self, key: T, priority: P) !bool {
             const did_extend = try self.extend_ids(key);
-            if (did_extend || self.id_to_heap_pos[key] == self.NULL) { // new key
+            if (did_extend || (self.id_to_heap_pos[key] == self.NULL)) { // new key
                 self.ensureCapacity(1);
                 self.addUnchecked(key, priority);
             } else { // old key, just update
@@ -210,7 +210,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
 
 
         pub fn getPriority(self: *Self, key: T) ?P {
-            if (self.id_to_heap_pos.len >= key || self.id_to_heap_pos[key] == self.NULL) {
+            if ((self.id_to_heap_pos.len >= key) || (self.id_to_heap_pos[key] == self.NULL)) {
                 return null;
             } else {
                 const idx = self.id_to_heap_pos[key];

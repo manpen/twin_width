@@ -55,29 +55,29 @@ pub inline fn circular_permutation_shift(comptime T: type, data: []T) void {
 
 pub const MinHash = struct {
     const Self = @This();
-    permutation: []u32,
 
-    pub inline fn permutate(slice: []u32, seed: u64) void {
-        var gen = std.rand.DefaultPrng.init(seed);
-        fisher_yates_shuffle(u32, slice, &gen);
+    const PRIME: u32 = 4_294_967_291; // = 2^32 - 5
+    //const PRIME: u32 = 2_147_483_647; // = 2^31 - 1
+
+    shift: u32,
+    mult: u32,
+
+    pub fn sample_hash_function(generator: *std.rand.Random, n: u32) Self {
+        _ = n; // may be needed for other hash functions
+
+        var shift = generator.intRangeAtMost(u32, 0, PRIME - 1);
+        var mult = generator.intRangeAtMost(u32, 1, PRIME - 1);
+        return Self{ .shift = shift, .mult = mult };
     }
 
-    pub inline fn generatePermutation(allocator: std.mem.Allocator, length: u32) ![]u32 {
-        var memory = try allocator.alloc(u32, length);
-        for (0..memory.len) |i| {
-            memory[i] = @intCast(u32, i);
-        }
-        return memory;
-    }
-
-    pub inline fn init(permutation: []u32) Self {
-        return Self{
-            .permutation = permutation,
-        };
+    pub fn invalid() Self {
+        return Self{ .shift = 0, .mult = 0 };
     }
 
     pub inline fn getHash(self: *const Self, item: u32) u32 {
-        return self.permutation[item];
+        std.debug.assert(self.mult != 0);
+        const hashed = (@intCast(u64, self.mult) * item + self.shift) % PRIME;
+        return @intCast(u32, hashed);
     }
 
     pub inline fn hash(self: *const Self, comptime InputIteratorType: type, iter: InputIteratorType) u32 {
@@ -619,12 +619,14 @@ pub fn MinHashBand(comptime B: u32) type {
             self.collisions.clearRetainingCapacity();
         }
 
-        pub inline fn init(allocator: std.mem.Allocator, cache_size: u32, permutation: []u32) !Self {
-            var hashes = try allocator.alloc(MinHash, B);
-
-            for (hashes) |*hash| {
-                hash.* = MinHash.init(permutation);
+        pub fn randomize_functions(self: *Self, generator: *std.rand.Random) void {
+            for (self.hash_functions) |*h| {
+                h.* = MinHash.sample_hash_function(generator, 0);
             }
+        }
+
+        pub inline fn init(allocator: std.mem.Allocator, cache_size: u32) !Self {
+            var hashes = try allocator.alloc(MinHash, B);
 
             var collisions = std.HashMapUnmanaged([]u32, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContext, 80){};
 
@@ -743,7 +745,6 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         const Self = @This();
 
         bands: []MinHashBand(B),
-        permutation: []u32,
         hit_map: std.AutoHashMapUnmanaged(u64, u32),
 
         tww_nb: std.AutoArrayHashMapUnmanaged(u64, u32),
@@ -916,11 +917,15 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         }
 
         pub fn bootstrapNodes(self: *Self, nodes: []T, graph: *graph_mod.Graph(T), seed: u64) !void {
-            MinHash.permutate(self.permutation, seed);
+            var rng = std.rand.DefaultPrng.init(seed);
+            var random = rng.random();
+
             self.graph = graph;
-            for (0..self.bands.len) |j| {
-                self.bands[j].clear();
+            for (self.bands) |*b| {
+                b.clear();
+                b.randomize_functions(&random);
             }
+
             self.hit_map.clearRetainingCapacity();
             self.similarity_threshold = 0;
             for (self.similarity_cardinality) |*n| {
@@ -1062,11 +1067,11 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
         pub fn init(allocator: std.mem.Allocator, num_bands: u32, number_of_nodes: u32) !Self {
             var bands = try allocator.alloc(MinHashBand(B), num_bands);
-            var permutation = try MinHash.generatePermutation(allocator, number_of_nodes * num_bands * 2);
+
             if (num_bands % 3 != 0) @panic("Number of bands must be divisible by 3!");
             var counter: u32 = 0;
             for (bands) |*band| {
-                band.* = try MinHashBand(B).init(allocator, number_of_nodes, permutation[counter..(counter + 2 * number_of_nodes)]);
+                band.* = try MinHashBand(B).init(allocator, number_of_nodes);
                 counter += number_of_nodes * 2;
             }
 
@@ -1080,7 +1085,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             }
             var similarity_threshold: u32 = 0;
 
-            return Self{ .bands = bands, .permutation = permutation, .hit_map = hit_map, .allocator = allocator, .number_of_nodes = number_of_nodes, .graph = undefined, .tww_nb = tww_nb, .similarity_cardinality = similarity_cardinality, .similarity_threshold = similarity_threshold };
+            return Self{ .bands = bands, .hit_map = hit_map, .allocator = allocator, .number_of_nodes = number_of_nodes, .graph = undefined, .tww_nb = tww_nb, .similarity_cardinality = similarity_cardinality, .similarity_threshold = similarity_threshold };
         }
     };
 }

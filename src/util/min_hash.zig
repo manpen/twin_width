@@ -108,7 +108,6 @@ pub fn MinHashBand(comptime B: u32) type {
         hash_cache: []u32,
         collisions: std.HashMapUnmanaged([]u32, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContext, 80),
         allocator: std.mem.Allocator,
-        erased_set: std.AutoHashMapUnmanaged(u32, void),
 
         pub fn clear(self: *Self) void {
             var iter = self.collisions.iterator();
@@ -117,7 +116,6 @@ pub fn MinHashBand(comptime B: u32) type {
                 self.allocator.free(item.key_ptr.*);
             }
             self.collisions.clearRetainingCapacity();
-            self.erased_set.clearRetainingCapacity();
         }
 
         pub inline fn init(allocator: std.mem.Allocator, cache_size: u32, permutation: []u32) !Self {
@@ -131,9 +129,8 @@ pub fn MinHashBand(comptime B: u32) type {
 
             var hash_cache = try allocator.alloc(u32, cache_size * B);
 
-            var erased_set = std.AutoHashMapUnmanaged(u32, void){};
 
-            return Self { .hash_functions = hashes, .collisions = collisions, .allocator = allocator, .hash_cache = hash_cache, .erased_set = erased_set };
+            return Self { .hash_functions = hashes, .collisions = collisions, .allocator = allocator, .hash_cache = hash_cache };
         }
 
         pub inline fn rehashItem(self: *Self, comptime IterType: type, comptime Context: type, key: u32, iterator: IterType, context: Context, callback_removed: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void, callback_added: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void) !void {
@@ -174,6 +171,7 @@ pub fn MinHashBand(comptime B: u32) type {
                     self.hash_cache[key * B + i] = std.math.min(self.hash_cache[key * B + i], hash);
                 }
             }
+
 
             if (removed) {
                 callback_added(context, key, try self.addItemFromCache(key));

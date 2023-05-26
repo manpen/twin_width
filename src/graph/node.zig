@@ -83,7 +83,6 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
         red_edges: compressed_bitmap.FastCompressedBitmap(T, promote_threshold, degrade_threshold),
         high_degree_node: ?*LargeNodeQueryProcessor(T),
         num_leafes: T,
-				red_weight_neighbors: u64,
 
         pub fn promoteToLargeDegreeNode(self: *Self, graph: *const Graph(T)) !void {
             if (self.high_degree_node == null) {

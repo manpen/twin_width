@@ -59,6 +59,7 @@ const FeatureTwinPruning: bool = FeaturePruning and true;
 const FeatureTinyGraphBelowSlack: bool = FeaturePruning and true; // almost no effect, as it only helps, if we're about to find a solution
 const FeaturePruneTinyRedBridges: bool = FeaturePruning and true;
 const FeaturePruneGeneralizedTwins: bool = FeaturePruning and true;
+const FeaturePruneBlackCCs: bool = FeaturePruning and true;
 
 const FeatureComplements: bool = false; // BROKEN
 const FeatureOuterPathPruning: bool = FeaturePruning and true; // BROKEN
@@ -657,17 +658,7 @@ fn Frame(comptime Graph: type) type {
                 return self.contractNodes(sur, rem);
             }
 
-            self.work_graph.mergeNodes(rem, sur, null);
-
-            self.work_tww = @max(self.work_tww, self.work_graph.redDeg(sur));
-            self.work_tww = @max(self.work_tww, self.work_graph.maxRedDegreeIn(self.work_graph.constRedNeighbors(sur)));
-            {
-                var three = self.work_graph.closedNeighborsOfSet(self.work_graph.constTwoNeighbors(sur));
-                self.work_contracted.assignOr(&three);
-            }
-            _ = self.work_contracted.setBit(sur);
-
-            self.context.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = sur });
+            self.contractNodesWithoutPruning(rem, sur);
 
             if (self.work_tww >= self.context.upper_excl) {
                 return;
@@ -692,10 +683,86 @@ fn Frame(comptime Graph: type) type {
                     continue;
                 }
 
+                if (try self.pruneBlackCCs()) {
+                    continue;
+                }
+
                 self.tinyGraphBelowSlack();
 
                 break;
             }
+        }
+
+        fn contractNodesWithoutPruning(self: *Self, rem: Node, sur: Node) void {
+            if (rem < sur) {
+                return self.contractNodesWithoutPruning(sur, rem);
+            }
+
+            self.work_graph.mergeNodes(rem, sur, null);
+
+            self.work_tww = @max(self.work_tww, self.work_graph.redDeg(sur));
+            self.work_tww = @max(self.work_tww, self.work_graph.maxRedDegreeIn(self.work_graph.constRedNeighbors(sur)));
+            {
+                var three = self.work_graph.closedNeighborsOfSet(self.work_graph.constTwoNeighbors(sur));
+                self.work_contracted.assignOr(&three);
+            }
+            _ = self.work_contracted.setBit(sur);
+
+            self.context.working_seq.appendAssumeCapacity(Contraction{ .rem = rem, .sur = sur });
+        }
+
+        fn pruneBlackCCs(self: *Self) anyerror!bool {
+            if (!FeaturePruneBlackCCs) {
+                return false;
+            }
+
+            var iter = self.work_graph.cc_iter();
+            while (iter.next()) |bcc| {
+                assert(bcc.cardinality() > 1);
+
+                if (bcc.cardinality() >= self.context.upper_excl) {
+                    continue;
+                }
+
+                var reds = Graph.BitSet.new();
+                var max_red: Node = 0;
+                {
+                    var riter = bcc.iter_set();
+                    while (riter.next()) |u| {
+                        reds.assignOr(self.work_graph.constRedNeighbors(u));
+                        max_red = @max(max_red, self.work_graph.redDeg(u));
+                    }
+                }
+                reds.assignSub(&bcc);
+
+                if (reds.cardinality() > max_red) {
+                    continue;
+                }
+
+                var card = bcc.cardinality();
+
+                if (card == 2) {
+                    var it = bcc.iter_set();
+                    var u = it.next().?;
+                    var v = it.next().?;
+
+                    try self.contractNodes(u, v);
+                    return true;
+                } else if (card == 3 and max_red < self.slack) {
+                    var it = bcc.iter_set();
+                    var u = it.next().?;
+                    var v = it.next().?;
+                    var w = it.next().?;
+
+                    self.contractNodesWithoutPruning(w, v);
+                    try self.contractNodes(v, u);
+                    return true;
+                } else {
+                    std.debug.print("pruneBlackCC with {d} nodes with m {d} and s {d}\n", .{ bcc.cardinality(), max_red, self.slack });
+                }
+            }
+
+            return false;
         }
 
         fn tinyRedBridgesAt(self: *Self, host: Node) anyerror!bool {
@@ -1026,10 +1093,11 @@ fn Frame(comptime Graph: type) type {
                 var it2 = it1;
                 var red_deg_v = self.work_graph.redDeg(v);
                 while (it2.next()) |w| {
+                    var red_deg_w = self.work_graph.redDeg(w);
                     var red = self.work_graph.redNeighborsAfterMerge(v, w);
 
                     var red_card = red.cardinality();
-                    if (red_card > red_deg_v or red_card > self.work_graph.redDeg(w)) {
+                    if (red_card > red_deg_v or red_card > red_deg_w) {
                         continue;
                     }
 

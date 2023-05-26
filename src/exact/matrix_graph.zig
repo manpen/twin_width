@@ -626,6 +626,88 @@ pub fn MatrixGraph(comptime num_nodes: u32) type {
             self.endBatchUpdates();
             self.assertIsConsistent();
         }
+
+        pub inline fn writePaceFile(self: *Self, filename: []const u8) !void {
+            std.debug.print("Write file: {s}", .{filename});
+            var file = try std.fs.cwd().createFile(filename, .{});
+            defer file.close();
+            var writer = file.writer();
+
+            var max_node: u32 = 0;
+            {
+                var iter = self.has_neighbors.iter_set();
+                while (iter.next()) |v| {
+                    max_node = v;
+                }
+            }
+
+            try std.fmt.format(writer, "p tww {d} {d}\n", .{ max_node + 1, self.num_edges });
+
+            var outer = self.has_neighbors.iter_set();
+            while (outer.next()) |u| {
+                var inner = self.constNeighbors(u).iter_set();
+                while (inner.next()) |v| {
+                    if (v > u) {
+                        break;
+                    }
+                    try std.fmt.format(writer, "{d} {d}\n", .{ u + 1, v + 1 });
+                }
+            }
+        }
+
+        const CCIterator = struct {
+            graph: *const Self,
+            remaining: BitSet,
+            skip_trivial: bool,
+
+            pub fn next(self: *@This()) ?BitSet {
+                var cc = BitSet.new();
+
+                var front = while (true) {
+                    if (self.remaining.areAllUnset()) {
+                        return null;
+                    }
+
+                    var iter = self.remaining.iter_set();
+                    var seed = iter.next().?;
+                    var front = self.graph.blackNeighborsCopied(seed);
+
+                    if (self.skip_trivial and front.areAllUnset()) {
+                        _ = self.remaining.unsetBit(seed);
+                    } else {
+                        _ = cc.setBit(seed);
+                        cc.assignOr(&front);
+                        break front;
+                    }
+                };
+
+                while (true) {
+                    // compute all back neighbors of current front
+                    var new_front = BitSet.new();
+                    var iter = front.iter_set();
+                    while (iter.next()) |u| {
+                        var b = self.graph.blackNeighborsCopied(u);
+                        new_front.assignOr(&b);
+                    }
+
+                    // compute acutal new ones
+                    new_front.assignSub(&cc);
+                    if (new_front.areAllUnset()) {
+                        break;
+                    }
+
+                    cc.assignOr(&new_front);
+                    front = new_front;
+                }
+
+                self.remaining.assignSub(&cc);
+                return cc;
+            }
+        };
+
+        pub fn cc_iter(self: *const Self) CCIterator {
+            return CCIterator{ .graph = self, .remaining = self.has_neighbors, .skip_trivial = true };
+        }
     };
 }
 

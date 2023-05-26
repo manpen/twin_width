@@ -72,7 +72,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 5),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 4),
 
         // Usually the exact tries to find a solution that is strictly better than
         // the heuristic one (oftentimes only proving a lower bound). If set to true,
@@ -333,127 +333,7 @@ pub fn Graph(comptime T: type) type {
             }
         };
 
-        pub const TwwScorerSim = struct {
-            tww: T,
-            tww_nb: T,
-            sim: u32,
-
-            pub fn default() TwwScorerSim {
-                return .{ .tww = std.math.maxInt(T), .tww_nb = std.math.maxInt(T), .sim = 0 };
-            }
-
-            pub fn better(self: *TwwScorerSim, other: *TwwScorerSim, current_tww: T) bool {
-                if (self.tww_nb <= current_tww) {
-                    return self.sim > other.sim;
-                } else {
-                    return self.tww_nb < other.tww_nb or (self.tww_nb == other.tww_nb and self.sim > other.sim);
-                }
-            }
-        };
-
-        pub fn calculateMaxTwwScoreSim(self: *Self, erased: T, survivor: T) TwwScorerSim {
-            var delta_red: T = 0;
-            var tww: T = 0;
-            var red_iter = self.node_list[erased].red_edges.iterator();
-            var sim: u32 = 0;
-            var correction_factor: T = 0;
-
-            while (red_iter.next()) |item| {
-                if (item == survivor) {
-                    correction_factor = 1;
-                    continue;
-                }
-
-                if (!self.node_list[survivor].red_edges.contains(item)) {
-                    delta_red += 1;
-                    const key = min_hash_mod.MinHashSimilarity(T, 3).calculateUniqueKey(item, survivor, self.number_of_nodes);
-
-                    if (self.min_hash.hit_map.getPtr(key)) |pt| {
-                        sim += pt.*;
-                    }
-                }
-            }
-
-            delta_red += self.node_list[survivor].red_edges.cardinality();
-            delta_red -= correction_factor;
-
-            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
-
-            while (black_iter.next()) |item| {
-                if (item == survivor or item == erased) {
-                    continue;
-                }
-                // Came from erased
-                if (black_iter.first) {
-                    if (!self.node_list[survivor].red_edges.contains(item)) {
-                        delta_red += 1;
-                        const key = min_hash_mod.MinHashSimilarity(T, 3).calculateUniqueKey(item, survivor, self.number_of_nodes);
-
-                        if (self.min_hash.hit_map.getPtr(key)) |pt| {
-                            sim += pt.*;
-                        }
-                        tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
-                    }
-                }
-                // Came from survivor
-                else {
-                    if (!self.node_list[erased].red_edges.contains(item)) {
-                        delta_red += 1;
-                        const key = min_hash_mod.MinHashSimilarity(T, 3).calculateUniqueKey(item, survivor, self.number_of_nodes);
-
-                        if (self.min_hash.hit_map.getPtr(key)) |pt| {
-                            sim += pt.*;
-                        }
-                        tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
-                    }
-                }
-            }
-            return .{ .tww = delta_red, .tww_nb = std.math.max(delta_red, tww), .sim = sim };
-        }
-
-        pub fn calculateMaxTwwScoreSimDescend(self: *Self, erased: T, survivor: T) !TwwScorer {
-            var delta_red: T = 0;
-            var tww: T = 0;
-            var red_iter = self.node_list[erased].red_edges.iterator();
-            var correction_factor: T = 0;
-
-            while (red_iter.next()) |item| {
-                if (item == survivor) {
-                    correction_factor = 1;
-                    continue;
-                }
-
-                if (!self.node_list[survivor].red_edges.contains(item)) {
-                    delta_red += 1;
-                }
-            }
-
-            delta_red += self.node_list[survivor].red_edges.cardinality();
-            delta_red -= correction_factor;
-
-            var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
-
-            while (black_iter.next()) |item| {
-                if (item == survivor or item == erased) {
-                    continue;
-                }
-                // Came from erased
-                if (black_iter.first) {
-                    if (!self.node_list[survivor].red_edges.contains(item)) {
-                        delta_red += 1;
-                        tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
-                    }
-                }
-                // Came from survivor
-                else {
-                    if (!self.node_list[erased].red_edges.contains(item)) {
-                        delta_red += 1;
-                        tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
-                    }
-                }
-            }
-            return .{ .tww = delta_red, .tww_nb = std.math.max(delta_red, tww), .delta_red_edges = try self.min_hash.getDeltaMergeSimilarity(erased, survivor) };
-        }
+        
         pub fn calculateMaxTwwScore(self: *Self, erased: T, survivor: T) TwwScorer {
             var delta_red: T = 0;
             var tww: T = 0;
@@ -984,12 +864,6 @@ pub fn Graph(comptime T: type) type {
                 try self.min_hash.changedEdge(t, self, .{.removed = erased,.red=false});
             }
 
-            //try self.min_hash.batchUpdateRehashNodes(erased,survivor,self);
-            //var iter_survivor = self.node_list[survivor].unorderedIterator();
-            //while(iter_survivor.next()) |item| {
-            //	if(item == erased) continue;
-            //	try self.min_hash.rehashNode(item,self);
-            //}
             try self.min_hash.rehashNode(survivor, self);
             try self.min_hash.removeNode(erased);
 
@@ -1174,7 +1048,7 @@ pub fn Graph(comptime T: type) type {
                 .last_merge_first_level_merge = false,
                 .last_merge_red_edges_erased = try std.ArrayListUnmanaged(T).initCapacity(allocator, number_of_nodes),
             };
-            graph.min_hash = try min_hash_mod.MinHashSimiliarity(T, 1).init(allocator, 50, graph.number_of_nodes);
+            graph.min_hash = try min_hash_mod.MinHashSimiliarity(T, 1).init(allocator, 36, graph.number_of_nodes);
 
             return graph;
         }
@@ -1232,9 +1106,8 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 5).init(graph_instance.allocator, 48, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 36, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
-
             return graph_instance;
         }
 

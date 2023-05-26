@@ -225,7 +225,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
             contractions_left.* -= 1;
 
-            var last_evoked_twin_width = try self.graph.addContraction(min_contraction.erased, min_contraction.survivor, seq);
+            var last_evoked_twin_width = try self.graph.addContractionNoMinHash(min_contraction.erased, min_contraction.survivor, seq);
             total_tww = std.math.max(last_evoked_twin_width, total_tww);
 
             // Reduce leafes if one was created
@@ -237,7 +237,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                     while (parent_node_iter.next()) |item| {
                         if (item == min_contraction.survivor) continue;
                         if (self.graph.node_list[item].isLeaf()) {
-                            last_evoked_twin_width = try self.graph.addContraction(item, min_contraction.survivor, seq);
+                            last_evoked_twin_width = try self.graph.addContractionNoMinHash(item, min_contraction.survivor, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
                             enable_follow_up_merge.* = false;
@@ -256,7 +256,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                 while (parent_node_iter.next()) |item| {
                     if (self.graph.node_list[item].isLeaf()) {
                         if (first_leaf) |k| {
-                            last_evoked_twin_width = try self.graph.addContraction(k, item, seq);
+                            last_evoked_twin_width = try self.graph.addContractionNoMinHash(k, item, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
                             enable_follow_up_merge.* = false;
@@ -886,7 +886,11 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Paths might be dangerous
             try self.reduceLeafesAndPaths(K, P, seq, solver, false);
 
+						var time = try std.time.Instant.now();
             try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph,seed+10123);
+						var time_after = try std.time.Instant.now();
+
+						std.debug.print("Total time {}\n",.{time_after.since(time)/(1000*1000)});
 
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();
@@ -930,7 +934,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             var current_postpones: u32 = 0;
 
             // Disable exhaustive solving for now
-            const exhaustive_solving_thresh = 300;
+            const exhaustive_solving_thresh = 200;
 
             var enable_follow_up_merge: bool = true;
 
@@ -987,13 +991,13 @@ pub fn InducedSubGraph(comptime T: type) type {
                 // Reset all variables which were set to select the best postponed move
 
 								var used_min_hash_move:bool = false;
-								if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
-									const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
-									if(t.isLess(selection.potential,seq.getTwinWidth())) {
-										min_contraction = best;
-										used_min_hash_move = true;
-									}
-								}
+								//if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
+								//	const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
+								//	if(t.isLess(selection.potential,seq.getTwinWidth())) {
+								//		min_contraction = best;
+								//		used_min_hash_move = true;
+								//	}
+								//}
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
 

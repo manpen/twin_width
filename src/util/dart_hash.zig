@@ -64,6 +64,7 @@ pub const TabulationHashFunction32 = struct {
 };
 
 
+// Reference: https://arxiv.org/pdf/2005.11547.pdf
 pub const DartHash = struct {
 	pub const Dart = struct {
 		index: u64,

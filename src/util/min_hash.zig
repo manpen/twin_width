@@ -105,7 +105,7 @@ pub const MinHashBandContextWeighted = struct {
 pub fn MinHashBandWeighted(comptime B: u32) type {
     return struct {
         const Self = @This();
-				dart_hash: dart_hash.DartMinHash,
+        dart_hash: dart_hash.DartMinHash,
         hash_cache: []u8,
         collisions: std.HashMapUnmanaged([]u8, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContextWeighted, 80),
         allocator: std.mem.Allocator,
@@ -120,26 +120,25 @@ pub fn MinHashBandWeighted(comptime B: u32) type {
         }
 
         pub inline fn init(allocator: std.mem.Allocator, cache_size: u32, seed: u64) !Self {
-						var rng = std.rand.DefaultPrng.init(seed);
-            var hash = try dart_hash.DartMinHash.init(allocator,&rng,B);
+            var rng = std.rand.DefaultPrng.init(seed);
+            var hash = try dart_hash.DartMinHash.init(allocator, &rng, B);
 
             var collisions = std.HashMapUnmanaged([]u8, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContextWeighted, 80){};
 
             var hash_cache = try allocator.alloc(u8, cache_size * B);
 
-
-            return Self { .dart_hash = hash, .collisions = collisions, .allocator = allocator, .hash_cache = hash_cache };
+            return Self{ .dart_hash = hash, .collisions = collisions, .allocator = allocator, .hash_cache = hash_cache };
         }
 
         pub inline fn rehashItem(self: *Self, comptime IterType: type, comptime Context: type, key: u32, total_weight: f64, iterator: IterType, context: Context, callback_removed: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void, callback_added: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void) !void {
-						const hash = try self.dart_hash.hash(IterType,iterator,total_weight);
-						if(!std.mem.eql(u8, self.hash_cache[key * B .. key * B + B], hash)) {
-							const first = try self.removeItem(key);
-							callback_removed(context, key, first);
+            const hash = try self.dart_hash.hash(IterType, iterator, total_weight);
+            if (!std.mem.eql(u8, self.hash_cache[key * B .. key * B + B], hash)) {
+                const first = try self.removeItem(key);
+                callback_removed(context, key, first);
 
-							const next = try self.addItem(IterType, key, iterator, total_weight);
-							callback_added(context, key, next);
-						}
+                const next = try self.addItem(IterType, key, iterator, total_weight);
+                callback_added(context, key, next);
+            }
         }
 
         inline fn addItemFromCache(self: *Self, key: u32) !?*std.AutoArrayHashMapUnmanaged(u32, void) {
@@ -159,9 +158,9 @@ pub fn MinHashBandWeighted(comptime B: u32) type {
 
         // Returns the collisions if there were any
         pub inline fn addItem(self: *Self, comptime IterType: type, key: u32, iterator: IterType, total_weight: f64) !?*std.AutoArrayHashMapUnmanaged(u32, void) {
-						const hash = try self.dart_hash.hash(IterType, iterator, total_weight);
-						@memcpy(self.hash_cache[key * B .. key * B + B], hash);
-						return self.addItemFromCache(key);
+            const hash = try self.dart_hash.hash(IterType, iterator, total_weight);
+            @memcpy(self.hash_cache[key * B .. key * B + B], hash);
+            return self.addItemFromCache(key);
         }
 
         pub inline fn getSignature(self: *const Self, key: u32) []u8 {
@@ -217,45 +216,44 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
 
         pub const CANIDATE_COUNT: u32 = 1000;
 
-				pub const WeightedItem = struct {
-					index: u32,
-					weight: f64,
-				};
+        pub const WeightedItem = struct {
+            index: u32,
+            weight: f64,
+        };
 
-				pub inline fn keyIntoMove(key: u64, number_of_nodes: u32) contraction.Contraction(T) {
-					var first = key / number_of_nodes;
-					var second = key % number_of_nodes;
-					return contraction.Contraction(T){ .erased = @intCast(T, first), .survivor = @intCast(T, second) };
-				}
+        pub inline fn keyIntoMove(key: u64, number_of_nodes: u32) contraction.Contraction(T) {
+            var first = key / number_of_nodes;
+            var second = key % number_of_nodes;
+            return contraction.Contraction(T){ .erased = @intCast(T, first), .survivor = @intCast(T, second) };
+        }
 
         const NodeIteratorSplitRedBlack = struct {
             number_of_nodes: u32,
-						graph: *graph_mod.Graph(T),
+            graph: *graph_mod.Graph(T),
             iter: graph_mod.Graph(T).NodeType.UnorderedNodeEdgeIterator,
             final_node: ?u32 = null,
-						final_node_sent: bool = false,
-						pub inline fn reset(self: *NodeIteratorSplitRedBlack) void {
-							self.iter.reset();
-							self.final_node_sent = false;
-						}
+            final_node_sent: bool = false,
+            pub inline fn reset(self: *NodeIteratorSplitRedBlack) void {
+                self.iter.reset();
+                self.final_node_sent = false;
+            }
 
             pub fn next(self: *NodeIteratorSplitRedBlack) ?WeightedItem {
                 if (self.iter.next()) |item| {
-										const weight = @intToFloat(f64,self.graph.node_list[item].red_edges.cardinality()+1);
+                    const weight = @intToFloat(f64, self.graph.node_list[item].red_edges.cardinality() + 1);
                     //if (self.iter.red) return .{.index=item + self.number_of_nodes, .weight = weight};
-                    return .{.index=item,.weight = weight};
+                    return .{ .index = item, .weight = weight };
                 }
                 if (self.final_node) |item| {
-										if(self.final_node_sent) return null;
-										self.final_node_sent = true;
-										if(item >= self.number_of_nodes) {
-											const weight = @intToFloat(f64,self.graph.node_list[item-self.number_of_nodes].red_edges.cardinality()+1);
-											return .{.index=item-self.number_of_nodes, .weight = weight};
-										}
-										else {
-											const weight = @intToFloat(f64,self.graph.node_list[item].red_edges.cardinality()+1);
-											return .{.index=item, .weight = weight};
-										}
+                    if (self.final_node_sent) return null;
+                    self.final_node_sent = true;
+                    if (item >= self.number_of_nodes) {
+                        const weight = @intToFloat(f64, self.graph.node_list[item - self.number_of_nodes].red_edges.cardinality() + 1);
+                        return .{ .index = item - self.number_of_nodes, .weight = weight };
+                    } else {
+                        const weight = @intToFloat(f64, self.graph.node_list[item].red_edges.cardinality() + 1);
+                        return .{ .index = item, .weight = weight };
+                    }
                 }
                 return null;
             }
@@ -273,7 +271,7 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
         };
 
         pub inline fn calculateUniqueKey(a: u32, b: u32, number_of_nodes: u32) u64 {
-						if(a >= number_of_nodes or b >= number_of_nodes) @panic("Wrong key");
+            if (a >= number_of_nodes or b >= number_of_nodes) @panic("Wrong key");
             if (a < b) return @intCast(u64, b) * number_of_nodes + @intCast(u64, a);
             return @intCast(u64, a) * number_of_nodes + @intCast(u64, b);
         }
@@ -347,55 +345,54 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
             }
         }
 
-				pub const ChangedEdge = struct {
-					removed: u32,
-					red: bool = false,
-					added: ?u32 = null,
-					added_red: bool = false,
-				};
+        pub const ChangedEdge = struct {
+            removed: u32,
+            red: bool = false,
+            added: ?u32 = null,
+            added_red: bool = false,
+        };
 
-				pub fn changedEdge(self: *Self, node: u32, graph: *graph_mod.Graph(T), changed: ChangedEdge) !void {
-					{
-						var delta_weight:f32 = @intToFloat(f32,self.graph.node_list[changed.removed].red_edges.cardinality());
-						graph.node_list[node].total_weight -= delta_weight;
-						delta_weight = delta_weight/@floatCast(f32,graph.node_list[node].total_weight);
+        pub fn changedEdge(self: *Self, node: u32, graph: *graph_mod.Graph(T), changed: ChangedEdge) !void {
+            {
+                var delta_weight: f32 = @intToFloat(f32, self.graph.node_list[changed.removed].red_edges.cardinality());
+                graph.node_list[node].total_weight -= delta_weight;
+                delta_weight = delta_weight / @floatCast(f32, graph.node_list[node].total_weight);
 
-						graph.node_list[node].delta_potential_weighted_jaccard += delta_weight;
-						
-					}
-						
-						if(changed.added) |add| {
-							var delta_weight:f32 = @intToFloat(f32,self.graph.node_list[add].red_edges.cardinality());
-							graph.node_list[node].total_weight += delta_weight;
-							delta_weight = delta_weight/@floatCast(f32,graph.node_list[node].total_weight);
-							graph.node_list[node].delta_potential_weighted_jaccard += delta_weight;
-						}
-						if(graph.node_list[node].delta_potential_weighted_jaccard > 0.05) {
-							return self.rehashNode(node,graph);
-						}
-				}
+                graph.node_list[node].delta_potential_weighted_jaccard += delta_weight;
+            }
+
+            if (changed.added) |add| {
+                var delta_weight: f32 = @intToFloat(f32, self.graph.node_list[add].red_edges.cardinality());
+                graph.node_list[node].total_weight += delta_weight;
+                delta_weight = delta_weight / @floatCast(f32, graph.node_list[node].total_weight);
+                graph.node_list[node].delta_potential_weighted_jaccard += delta_weight;
+            }
+            if (graph.node_list[node].delta_potential_weighted_jaccard > 0.05) {
+                return self.rehashNode(node, graph);
+            }
+        }
 
         pub fn rehashNode(self: *Self, node: u32, graph: *graph_mod.Graph(T)) !void {
             const split = self.bands.len / 3;
-						var total_weight:f64 = 0.0;
-						graph.node_list[node].delta_potential_weighted_jaccard = 0.0;
+            var total_weight: f64 = 0.0;
+            graph.node_list[node].delta_potential_weighted_jaccard = 0.0;
 
-						var iterator = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .graph = graph };
-						while(iterator.next()) |item| {
-							total_weight += item.weight;
-						}
-						iterator.reset();
-						graph.node_list[node].total_weight = @floatCast(f32,total_weight);
+            var iterator = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .graph = graph };
+            while (iterator.next()) |item| {
+                total_weight += item.weight;
+            }
+            iterator.reset();
+            graph.node_list[node].total_weight = @floatCast(f32, total_weight);
             for (0..split) |index| {
                 var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .graph = graph };
 
-                try self.bands[index].rehashItem(*NodeIteratorSplitRedBlack, @TypeOf(self), node,total_weight, &iter, self, Self.removedCallback, Self.addedCallback);
+                try self.bands[index].rehashItem(*NodeIteratorSplitRedBlack, @TypeOf(self), node, total_weight, &iter, self, Self.removedCallback, Self.addedCallback);
             }
-						total_weight+=@intToFloat(f64,graph.node_list[node].red_edges.cardinality());
+            total_weight += @intToFloat(f64, graph.node_list[node].red_edges.cardinality());
             for (split..split * 2) |index| {
                 var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node, .graph = graph };
 
-                try self.bands[index].rehashItem(*NodeIteratorSplitRedBlack, @TypeOf(self), node,total_weight, &iter, self, Self.removedCallback, Self.addedCallback);
+                try self.bands[index].rehashItem(*NodeIteratorSplitRedBlack, @TypeOf(self), node, total_weight, &iter, self, Self.removedCallback, Self.addedCallback);
             }
             for (split * 2..self.bands.len) |index| {
                 var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node + self.number_of_nodes, .graph = graph };
@@ -426,7 +423,7 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
                 for (0..split) |j| {
                     var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[i].unorderedIterator(), .graph = graph };
 
-                    if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter, @intToFloat(f64,graph.node_list[i].cardinality()))) |hits| {
+                    if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter, @intToFloat(f64, graph.node_list[i].cardinality()))) |hits| {
                         var iterator = hits.iterator();
                         while (iterator.next()) |hit_pt| {
                             const hit = hit_pt.key_ptr.*;
@@ -441,10 +438,10 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
                         }
                     }
                 }
-                for (split..split*2) |j| {
+                for (split..split * 2) |j| {
                     var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[i].unorderedIterator(), .final_node = i, .graph = graph };
 
-                    if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter, @intToFloat(f64,graph.node_list[i].cardinality()))) |hits| {
+                    if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter, @intToFloat(f64, graph.node_list[i].cardinality()))) |hits| {
                         var iterator = hits.iterator();
                         while (iterator.next()) |hit_pt| {
                             const hit = hit_pt.key_ptr.*;
@@ -459,10 +456,10 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
                         }
                     }
                 }
-                for (split*2..self.bands.len) |j| {
-                    var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[i].unorderedIterator(), .final_node = i+self.number_of_nodes, .graph = graph };
+                for (split * 2..self.bands.len) |j| {
+                    var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[i].unorderedIterator(), .final_node = i + self.number_of_nodes, .graph = graph };
 
-                    if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter, @intToFloat(f64,graph.node_list[i].cardinality()))) |hits| {
+                    if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter, @intToFloat(f64, graph.node_list[i].cardinality()))) |hits| {
                         var iterator = hits.iterator();
                         while (iterator.next()) |hit_pt| {
                             const hit = hit_pt.key_ptr.*;
@@ -508,33 +505,33 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
         pub fn getBestMove(self: *Self, graph: *graph_mod.Graph(T), current_tww: T) !?contraction.Contraction(T) {
             var min_cont: ?contraction.Contraction(T) = null;
 
-						var erased_list = try std.BoundedArray(u64,1000).init(0);
+            var erased_list = try std.BoundedArray(u64, 1000).init(0);
             var iternb = self.tww_nb.iterator();
             while (iternb.next()) |it| {
                 const mv = Self.keyIntoMove(it.key_ptr.*, graph.number_of_nodes);
                 if (graph.erased_nodes.get(mv.erased) or graph.erased_nodes.get(mv.survivor)) {
-										try erased_list.append(it.key_ptr.*);
+                    try erased_list.append(it.key_ptr.*);
                 }
             }
-						for(erased_list.buffer[0..erased_list.len]) |it| {
-							_ = self.tww_nb.swapRemove(it);
-						}
+            for (erased_list.buffer[0..erased_list.len]) |it| {
+                _ = self.tww_nb.swapRemove(it);
+            }
 
             // Fill up
-						outer: for (1..self.bands.len + 1) |id| {
-							const index = @intCast(u32, self.bands.len - id);
-							self.similarity_threshold = index;
-							var iter = self.similarity_cardinality[index].iterator();
-							while (iter.next()) |it| {
-								if (self.tww_nb.count() >= Self.CANIDATE_COUNT) break :outer;
-								const mv = Self.keyIntoMove(it.key_ptr.*, graph.number_of_nodes);
-								try self.trackNodePair(mv.erased, mv.survivor);
-							}
-						}
+            outer: for (1..self.bands.len + 1) |id| {
+                const index = @intCast(u32, self.bands.len - id);
+                self.similarity_threshold = index;
+                var iter = self.similarity_cardinality[index].iterator();
+                while (iter.next()) |it| {
+                    if (self.tww_nb.count() >= Self.CANIDATE_COUNT) break :outer;
+                    const mv = Self.keyIntoMove(it.key_ptr.*, graph.number_of_nodes);
+                    try self.trackNodePair(mv.erased, mv.survivor);
+                }
+            }
 
-						if(self.similarity_threshold == 0 and self.tww_nb.count() == 0) {
-							std.debug.print("No moves left\n",.{});
-						}
+            if (self.similarity_threshold == 0 and self.tww_nb.count() == 0) {
+                std.debug.print("No moves left\n", .{});
+            }
 
             var best_tww = graph_mod.Graph(T).InducedTwinWidthPotential.default();
             var iter = self.tww_nb.iterator();
@@ -556,10 +553,10 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
         pub fn init(allocator: std.mem.Allocator, num_bands: u32, number_of_nodes: u32) !Self {
             var bands = try allocator.alloc(MinHashBandWeighted(B), num_bands);
             if (num_bands % 3 != 0) @panic("Number of bands must be divisible by 3!");
-						var seed:u64 = 129;
+            var seed: u64 = 129;
             for (bands) |*band| {
                 band.* = try MinHashBandWeighted(B).init(allocator, number_of_nodes, seed);
-								seed+=12362;
+                seed += 12362;
             }
 
             var hit_map = std.AutoHashMapUnmanaged(u64, u32){};
@@ -590,7 +587,6 @@ const TestIterator = struct {
     }
 };
 
-
 pub fn hashFn(ctx: MinHashBandContext, value: []u32) u64 {
     _ = ctx;
     return std.hash.Wyhash.hash(0, std.mem.sliceAsBytes(value));
@@ -601,7 +597,7 @@ pub fn eqFn(ctx: MinHashBandContext, rhs: []u32, lhs: []u32) bool {
     return std.mem.eql(u32, rhs, lhs);
 }
 
-pub const MinHashBandContext= struct {
+pub const MinHashBandContext = struct {
     pub const hash = hashFn;
     pub const eql = eqFn;
 };
@@ -634,8 +630,7 @@ pub fn MinHashBand(comptime B: u32) type {
 
             var hash_cache = try allocator.alloc(u32, cache_size * B);
 
-
-            return Self { .hash_functions = hashes, .collisions = collisions, .allocator = allocator, .hash_cache = hash_cache };
+            return Self{ .hash_functions = hashes, .collisions = collisions, .allocator = allocator, .hash_cache = hash_cache };
         }
 
         pub inline fn rehashItem(self: *Self, comptime IterType: type, comptime Context: type, key: u32, iterator: IterType, context: Context, callback_removed: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void, callback_added: fn (Context, u32, ?*std.AutoArrayHashMapUnmanaged(u32, void)) void) !void {
@@ -676,7 +671,6 @@ pub fn MinHashBand(comptime B: u32) type {
                     self.hash_cache[key * B + i] = std.math.min(self.hash_cache[key * B + i], hash);
                 }
             }
-
 
             if (removed) {
                 callback_added(context, key, try self.addItemFromCache(key));
@@ -744,7 +738,6 @@ pub fn MinHashBand(comptime B: u32) type {
     };
 }
 
-
 pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
     return struct {
         const Self = @This();
@@ -782,12 +775,11 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             }
         };
 
-				pub inline fn keyIntoMove(key: u64, number_of_nodes: u32) contraction.Contraction(T) {
-					var first = key / number_of_nodes;
-					var second = key % number_of_nodes;
-					return contraction.Contraction(T){ .erased = @intCast(T, first), .survivor = @intCast(T, second) };
-				}
-
+        pub inline fn keyIntoMove(key: u64, number_of_nodes: u32) contraction.Contraction(T) {
+            var first = key / number_of_nodes;
+            var second = key % number_of_nodes;
+            return contraction.Contraction(T){ .erased = @intCast(T, first), .survivor = @intCast(T, second) };
+        }
 
         const NodeIterator = struct {
             number_of_nodes: u32,
@@ -893,32 +885,32 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             }
         }
 
-				pub const ChangedEdge = struct {
-					removed: u32,
-					red: bool = false,
-					added: ?u32 = null,
-					added_red: bool = false,
-				};
+        pub const ChangedEdge = struct {
+            removed: u32,
+            red: bool = false,
+            added: ?u32 = null,
+            added_red: bool = false,
+        };
 
         pub fn changedEdge(self: *Self, node: u32, graph: *graph_mod.Graph(T), changed: ChangedEdge) !void {
             if (changed.added != null and !changed.added_red) {
                 std.debug.panic("Added black edge!\n", .{});
             }
 
- 						const removed = if (changed.red) changed.removed + self.number_of_nodes else changed.removed;
-						const added = if (changed.added) |a| if (changed.added_red) a + self.number_of_nodes else changed.added else changed.added;
+            const removed = if (changed.red) changed.removed + self.number_of_nodes else changed.removed;
+            const added = if (changed.added) |a| if (changed.added_red) a + self.number_of_nodes else changed.added else changed.added;
 
             const split = self.bands.len / 3;
             for (0..split) |index| {
                 var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator() };
-                try self.bands[index].updateItem(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.removedCallback, Self.addedCallback, removed,added);
+                try self.bands[index].updateItem(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.removedCallback, Self.addedCallback, removed, added);
             }
-            for (split..split*2) |index| {
+            for (split..split * 2) |index| {
                 var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node };
                 try self.bands[index].updateItem(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.removedCallback, Self.addedCallback, removed, added);
             }
-            for (split*2..self.bands.len) |index| {
-                var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node+self.number_of_nodes };
+            for (split * 2..self.bands.len) |index| {
+                var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node + self.number_of_nodes };
                 try self.bands[index].updateItem(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.removedCallback, Self.addedCallback, removed, added);
             }
         }
@@ -961,7 +953,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                         }
                     }
                 }
-                for (split..split*2) |j| {
+                for (split..split * 2) |j| {
                     var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[i].unorderedIterator(), .final_node = i };
 
                     if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter)) |hits| {
@@ -979,8 +971,8 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                         }
                     }
                 }
-                for (split*2..self.bands.len) |j| {
-                    var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[i].unorderedIterator(), .final_node = i+self.number_of_nodes };
+                for (split * 2..self.bands.len) |j| {
+                    var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[i].unorderedIterator(), .final_node = i + self.number_of_nodes };
 
                     if (try self.bands[j].addItem(*NodeIteratorSplitRedBlack, i, &iter)) |hits| {
                         var iterator = hits.iterator();
@@ -1036,20 +1028,20 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             }
 
             // Fill up
-						outer: for (1..self.bands.len + 1) |id| {
-							const index = @intCast(u32, self.bands.len - id);
-							self.similarity_threshold = index;
-							var iter = self.similarity_cardinality[index].iterator();
-							while (iter.next()) |it| {
-								if (self.tww_nb.count() >= Self.CANIDATE_COUNT) break :outer;
-								const mv = Self.keyIntoMove(it.key_ptr.*, graph.number_of_nodes);
-								try self.trackNodePair(mv.erased, mv.survivor);
-							}
-						}
+            outer: for (1..self.bands.len + 1) |id| {
+                const index = @intCast(u32, self.bands.len - id);
+                self.similarity_threshold = index;
+                var iter = self.similarity_cardinality[index].iterator();
+                while (iter.next()) |it| {
+                    if (self.tww_nb.count() >= Self.CANIDATE_COUNT) break :outer;
+                    const mv = Self.keyIntoMove(it.key_ptr.*, graph.number_of_nodes);
+                    try self.trackNodePair(mv.erased, mv.survivor);
+                }
+            }
 
-						if(self.similarity_threshold == 0 and self.tww_nb.count() == 0) {
-							std.debug.print("No moves left\n",.{});
-						}
+            if (self.similarity_threshold == 0 and self.tww_nb.count() == 0) {
+                std.debug.print("No moves left\n", .{});
+            }
 
             var best_tww = graph_mod.Graph(T).InducedTwinWidthPotential.default();
             var iter = self.tww_nb.iterator();
@@ -1092,7 +1084,6 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         }
     };
 }
-
 
 test "MinHash: Check is permutation" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

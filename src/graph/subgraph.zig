@@ -40,7 +40,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             target: T,
         };
 
-				pub const TargetMinimalInducedTwwScorer = struct {
+        pub const TargetMinimalInducedTwwScorer = struct {
             potential: Graph(T).TwwScorer,
             target: T,
         };
@@ -114,7 +114,6 @@ pub fn InducedSubGraph(comptime T: type) type {
 
             return result;
         }
-
 
         pub inline fn selectBestMoveFewRedEdges(self: *Self, comptime K: u32, comptime P: u32, first_node: T, solver: *solver_resources.SolverResources(T, K, P), current_tww: T) !TargetMinimalInducedTwwScorer {
             bfs_mod.bfs_topk_high_performance(T, K, first_node, self.graph, &solver.scratch_bitset, &solver.scorer);
@@ -886,7 +885,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Paths might be dangerous
             try self.reduceLeafesAndPaths(K, P, seq, solver, false);
 
-            try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph,seed+10123);
+            try self.graph.min_hash.bootstrapNodes(self.nodes, self.graph, seed + 10123);
 
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();
@@ -934,8 +933,8 @@ pub fn InducedSubGraph(comptime T: type) type {
 
             var enable_follow_up_merge: bool = true;
 
-						const threshold_potential = 2*solver.priority_queue.priority_queue.len/3;
-						_ = threshold_potential;
+            const threshold_potential = 2 * solver.priority_queue.priority_queue.len / 3;
+            _ = threshold_potential;
 
             while (contractions_left > exhaustive_solving_thresh) {
                 var prio_item = try solver.priority_queue.removeNext(total_tww);
@@ -986,14 +985,14 @@ pub fn InducedSubGraph(comptime T: type) type {
 
                 // Reset all variables which were set to select the best postponed move
 
-								var used_min_hash_move:bool = false;
-								if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
-									const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
-									if(t.isLess(selection.potential,seq.getTwinWidth())) {
-										min_contraction = best;
-										used_min_hash_move = true;
-									}
-								}
+                var used_min_hash_move: bool = false;
+                if (try self.graph.min_hash.getBestMove(self.graph, seq.getTwinWidth())) |best| {
+                    const t = self.graph.calculateInducedTwwPotential(best.erased, best.survivor, &selection.potential, seq.getTwinWidth());
+                    if (t.isLess(selection.potential, seq.getTwinWidth())) {
+                        min_contraction = best;
+                        used_min_hash_move = true;
+                    }
+                }
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
 
@@ -1001,13 +1000,11 @@ pub fn InducedSubGraph(comptime T: type) type {
 
                 total_tww = std.math.max(try self.addContractionAndLeafReduction(&enable_follow_up_merge, seq, min_contraction, &contractions_left), total_tww);
 
-
-
                 //try self.graph.min_hash.reinsertKMoves(3*K,&moves, self.graph);
 
                 solver.priority_queue.addTick(@intCast(T, contractions_left_copy - contractions_left));
 
-								if (enable_follow_up_merge and !used_min_hash_move and contractions_left > total_tww) {
+                if (enable_follow_up_merge and !used_min_hash_move and contractions_left > total_tww) {
                     var follow_up_moves: u32 = 0;
                     var next_selection: ?TargetMinimalInducedTww = null;
 
@@ -1042,7 +1039,6 @@ pub fn InducedSubGraph(comptime T: type) type {
                         }
                     }
                 }
-
 
                 // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
                 max_consecutive_postpones = contractions_left + 1;

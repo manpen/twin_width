@@ -157,7 +157,8 @@ pub inline fn bfs(comptime T: type, start_node: T, graph: *const Graph(T), visit
     };
 }
 
-pub inline fn bfs_topk_high_performance_inner(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, scorer: *topk.TopKScorer(T, K), comptime large_root: bool) void {
+pub inline fn bfs_topk_high_performance_inner(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, scorer: *topk.TopKScorer(T, K), comptime large_root: bool, seed: u64) void {
+		var own_card = graph.node_list[start_node].cardinality();
     {
         var black_iter = graph.node_list[start_node].black_edges.iterator();
         while (black_iter.next()) |item| {
@@ -173,26 +174,50 @@ pub inline fn bfs_topk_high_performance_inner(comptime T: type, comptime K: u32,
 
     const copy_frontier = scorer.write_ptr;
 
-    for (scorer.node_list[0..copy_frontier]) |id| {
-        if (!large_root and graph.node_list[id].isLargeNode()) {
-            var iter_large = graph.node_list[id].takeIterator(40);
-            while (iter_large.next()) |item| {
-                scorer.addVisit(item, visited.setExists(item));
+    if (own_card > 100) {
+        var generator = std.rand.DefaultPrng.init(@intCast(u64,start_node) +% @intCast(u64,own_card) +% seed);
+        // Prune at most ~17% of direct neighbors for high degree nodes
+        for (scorer.node_list[0..copy_frontier]) |id| {
+            if (generator.next() > std.math.maxInt(u64) / 3) {
+                if (!large_root and graph.node_list[id].isLargeNode()) {
+                    var iter_large = graph.node_list[id].takeIterator(40);
+                    while (iter_large.next()) |item| {
+                        scorer.addVisit(item, visited.setExists(item));
+                    }
+                } else {
+                    var black_iter = graph.node_list[id].black_edges.iterator();
+                    while (black_iter.next()) |item| {
+                        scorer.addVisit(item, visited.setExists(item));
+                    }
+                    var red_iter = graph.node_list[id].red_edges.iterator();
+                    while (red_iter.next()) |item| {
+                        scorer.addVisit(item, visited.setExists(item));
+                    }
+                }
             }
-        } else {
-            var black_iter = graph.node_list[id].black_edges.iterator();
-            while (black_iter.next()) |item| {
-                scorer.addVisit(item, visited.setExists(item));
-            }
-            var red_iter = graph.node_list[id].red_edges.iterator();
-            while (red_iter.next()) |item| {
-                scorer.addVisit(item, visited.setExists(item));
+        }
+    } else {
+        for (scorer.node_list[0..copy_frontier]) |id| {
+            if (!large_root and graph.node_list[id].isLargeNode()) {
+                var iter_large = graph.node_list[id].takeIterator(40);
+                while (iter_large.next()) |item| {
+                    scorer.addVisit(item, visited.setExists(item));
+                }
+            } else {
+                var black_iter = graph.node_list[id].black_edges.iterator();
+                while (black_iter.next()) |item| {
+                    scorer.addVisit(item, visited.setExists(item));
+                }
+                var red_iter = graph.node_list[id].red_edges.iterator();
+                while (red_iter.next()) |item| {
+                    scorer.addVisit(item, visited.setExists(item));
+                }
             }
         }
     }
 }
 
-pub inline fn bfs_topk_high_performance(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, scorer: *topk.TopKScorer(T, K)) void {
+pub inline fn bfs_topk_high_performance(comptime T: type, comptime K: u32, start_node: T, graph: *const Graph(T), visited: *bitset.FastBitSet, scorer: *topk.TopKScorer(T, K), seed: u64) void {
     visited.set(start_node);
     scorer.reset();
 
@@ -201,9 +226,9 @@ pub inline fn bfs_topk_high_performance(comptime T: type, comptime K: u32, start
     }
     var root_large = graph.node_list[start_node].isLargeNode();
     if (root_large) {
-        bfs_topk_high_performance_inner(T, K, start_node, graph, visited, scorer, true);
+        bfs_topk_high_performance_inner(T, K, start_node, graph, visited, scorer, true, seed);
     } else {
-        bfs_topk_high_performance_inner(T, K, start_node, graph, visited, scorer, false);
+        bfs_topk_high_performance_inner(T, K, start_node, graph, visited, scorer, false, seed);
     }
     _ = visited.unset(start_node);
     scorer.backing_storage[start_node] = -1_000_000;

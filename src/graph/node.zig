@@ -83,6 +83,8 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
         red_edges: compressed_bitmap.FastCompressedBitmap(T, promote_threshold, degrade_threshold),
         high_degree_node: ?*LargeNodeQueryProcessor(T),
         num_leafes: T,
+        total_weight: f32,
+        delta_potential_weighted_jaccard: f32,
 
         pub fn promoteToLargeDegreeNode(self: *Self, graph: *const Graph(T)) !void {
             if (self.high_degree_node == null) {
@@ -183,6 +185,12 @@ pub fn Node(comptime T: type, comptime promote_threshold: u32, comptime degrade_
                     return item;
                 }
                 return null;
+            }
+
+            pub inline fn reset(self: *UnorderedNodeEdgeIterator) void {
+                self.red_iter.reset();
+                self.black_iter.reset();
+                self.red = false;
             }
         };
 

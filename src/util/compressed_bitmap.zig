@@ -120,6 +120,15 @@ pub fn FastCompressedBitmap(comptime T: type, comptime promote_threshold: u32, c
                     .array => return self.array.next(),
                 }
             }
+
+            pub inline fn reset(self: *FastCompressedBitmapIterator) void {
+                switch (self.*) {
+                    .bitset => {
+                        self.bitset.reset();
+                    },
+                    .array => return self.array.reset(),
+                }
+            }
         };
 
         pub inline fn iterator(self: *const Self) FastCompressedBitmapIterator {

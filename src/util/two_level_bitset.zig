@@ -9,12 +9,12 @@ pub const FastBitSetIterator = struct {
     index_higher: u32,
     current: u64,
     index: u32,
-		pub inline fn reset(self: *Self) void {
-            self.current_higher = self.coerced_higher_ptr[0];
-            self.index_higher = 0;
-            self.current = 0;
-            self.index = 0;
-		}
+    pub inline fn reset(self: *Self) void {
+        self.current_higher = self.coerced_higher_ptr[0];
+        self.index_higher = 0;
+        self.current = 0;
+        self.index = 0;
+    }
 
     pub inline fn next(self: *Self) ?u32 {
         while (self.current == 0) {

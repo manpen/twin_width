@@ -47,20 +47,20 @@ pub fn build(b: *std.Build) void {
 
     /////////////////////////////
 
-    const sub_exact = b.addExecutable(.{
-        .name = "solver_exact",
-        .root_source_file = .{ .path = "src/submission_exact.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
-    sub_exact.single_threaded = true;
-    sub_exact.addIncludePath("src/tww");
-    b.installArtifact(sub_exact);
+    //const sub_exact = b.addExecutable(.{
+    //    .name = "solver_exact",
+    //    .root_source_file = .{ .path = "src/submission_exact.zig" },
+    //    .target = target,
+    //    .optimize = optimize,
+    //});
+    //sub_exact.single_threaded = true;
+    //sub_exact.addIncludePath("src/tww");
+    //b.installArtifact(sub_exact);
 
-    const run_sub_exact = b.addRunArtifact(sub_exact);
-    run_sub_exact.step.dependOn(b.getInstallStep());
-    const solver_step_exact = b.step("solver_exact", "Compile solver for submission");
-    solver_step_exact.dependOn(b.getInstallStep());
+    //const run_sub_exact = b.addRunArtifact(sub_exact);
+    //run_sub_exact.step.dependOn(b.getInstallStep());
+    //const solver_step_exact = b.step("solver_exact", "Compile solver for submission");
+    //solver_step_exact.dependOn(b.getInstallStep());
 
     ///////////////////
 

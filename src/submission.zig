@@ -19,7 +19,7 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
 
     signal_handler.initialize_signal_handler(try loaded_graph.findAllConnectedComponents());
     std.debug.print("Initialized signal handler. the pid is: {d}\n", .{std.os.linux.getpid()});
-    _ = loaded_graph.solveGreedy() catch |err| {
+    _ = loaded_graph.solveGreedy(null) catch |err| {
         std.debug.print("Error {}\n", .{err});
         return err;
     };

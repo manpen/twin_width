@@ -48,7 +48,7 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
     defer loaded_graph.deinit();
 
     _ = try loaded_graph.findAllConnectedComponents();
-    const tww = loaded_graph.solveGreedy() catch |err| {
+    const tww = loaded_graph.solveGreedy(50) catch |err| {
         std.debug.print("Error {}\n", .{err});
         return err;
     };
@@ -114,6 +114,16 @@ pub fn main() !void {
 
     var hpa_allocator = std.heap.FixedBufferAllocator.init(large_buffer);
     var hpa = hpa_allocator.allocator();
+
+    {
+        const args = try std.process.argsAlloc(allocator);
+        defer std.process.argsFree(allocator, args);
+
+        if (args.len > 1) {
+            _ = try initial_solver(hpa, args[1], args[1]);
+            return;
+        }
+    }
 
     // HARD COLLECTION
     // SOLVABLE!

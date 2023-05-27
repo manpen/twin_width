@@ -63,14 +63,8 @@ pub fn ConnectedComponent(comptime T: type) type {
             self.current_contraction_seq.deinit(allocator);
         }
 
-        pub fn solveSweepingTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), probing: bool) !T {
-            var now = try std.time.Instant.now();
-            const time_passed = (now.since(self.subgraph.graph.started_at) / (1000 * 1000 * 1000));
-            // Graph 194 takes around ~16 Seconds to finish up 2x safety factor
-            if (time_passed >= 267) {
-                return std.math.maxInt(T);
-            }
-            const result = try self.subgraph.solveSweepingSolverTopK(K, P, &self.current_contraction_seq, solver, (267 - time_passed), probing);
+        pub fn solveSweepingTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), probing: bool, seed: u64) !T {
+            const result = try self.subgraph.solveSweepingSolverTopK(K, P, &self.current_contraction_seq, solver, probing,seed);
             if (result < self.tww) {
                 try self.update_best();
                 self.tww = result;
@@ -89,23 +83,22 @@ pub fn ConnectedComponent(comptime T: type) type {
             try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
         }
 
-        pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P)) !T {
-            var result = try self.subgraph.solveGreedyTopK(K, P, &self.current_contraction_seq, solver, true,19);
+        pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), seed: u64) !T {
+            var result = try self.subgraph.solveGreedyTopK(K, P, &self.current_contraction_seq, solver, true, seed,self.tww);
             try self.update_best();
             self.tww = result;
-						if(self.tww>=0) return self.tww;
 
             if (self.tww < 200 or self.subgraph.nodes.len < 3700) {
                 if (self.subgraph.nodes.len > 2_000_000 and self.tww >= 90) {} else {
                     try self.resetGraph();
                     solver.reset();
-                    const sweeping = try self.solveSweepingTopK(K, P, solver, false);
+                    const sweeping = try self.solveSweepingTopK(K, P, solver, false, seed);
                     result = std.math.min(sweeping, result);
                 }
             } else if (self.tww < 500) {
                 try self.resetGraph();
                 solver.reset();
-                const sweeping = try self.solveSweepingTopK(K, P, solver, true);
+                const sweeping = try self.solveSweepingTopK(K, P, solver, true, seed);
                 result = std.math.min(sweeping, result);
             }
 
@@ -118,7 +111,8 @@ pub fn ConnectedComponent(comptime T: type) type {
             }
         }
 
-        pub fn solveGreedy(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P)) !T {
+        pub fn solveGreedy(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), seed: u64) !T {
+            _ = seed;
             var ctx_node = NodeScorerInduced(T){};
             var ctx_score = GraphScorer(T){};
 

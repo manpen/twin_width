@@ -72,7 +72,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 4),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 7),
 
         // Usually the exact tries to find a solution that is strictly better than
         // the heuristic one (oftentimes only proving a lower bound). If set to true,
@@ -333,7 +333,6 @@ pub fn Graph(comptime T: type) type {
             }
         };
 
-        
         pub fn calculateMaxTwwScore(self: *Self, erased: T, survivor: T) TwwScorer {
             var delta_red: T = 0;
             var tww: T = 0;
@@ -468,7 +467,7 @@ pub fn Graph(comptime T: type) type {
 
             var new_red_edges: i32 = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
-						var before_red_card = self.node_list[survivor].red_edges.cardinality();
+            var before_red_card = self.node_list[survivor].red_edges.cardinality();
 
             // Intuition is as following:
             // New red edges to nodes with a lot of red edges should decrease
@@ -483,7 +482,7 @@ pub fn Graph(comptime T: type) type {
                     delta_red += 1;
                 } else {
                     // We destroyed a red edge update potential
-                    red_potential -= (@intCast(i64,self.node_list[item].red_edges.cardinality())*@intCast(i64,self.node_list[item].red_edges.cardinality()));
+                    red_potential -= (@intCast(i64, self.node_list[item].red_edges.cardinality()) * @intCast(i64, self.node_list[item].red_edges.cardinality()));
                     new_red_edges -= 1;
                 }
             }
@@ -502,7 +501,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[survivor].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                    		red_potential += (@intCast(i64,(self.node_list[item].red_edges.cardinality()+1))*@intCast(i64,(self.node_list[item].red_edges.cardinality()+1)));
+                        red_potential += (@intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)) * @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -511,7 +510,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[erased].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                    		red_potential += (@intCast(i64,(self.node_list[item].red_edges.cardinality()+1))*@intCast(i64,(self.node_list[item].red_edges.cardinality()+1)));
+                        red_potential += (@intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)) * @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -522,17 +521,16 @@ pub fn Graph(comptime T: type) type {
                 }
             }
 
-						if(before_red_card < delta_red) {
-							// replace by small gaussian
-							for(before_red_card+1..delta_red+1) |c| {
-                red_potential += (@intCast(i64,c*c));
-							}
-						}
-						else {
-							for(delta_red+1..before_red_card+1) |c| {
-                red_potential -= (@intCast(i64,c*c));
-							}
-						}
+            if (before_red_card < delta_red) {
+                // replace by small gaussian
+                for (before_red_card + 1..delta_red + 1) |c| {
+                    red_potential += (@intCast(i64, c * c));
+                }
+            } else {
+                for (delta_red + 1..before_red_card + 1) |c| {
+                    red_potential -= (@intCast(i64, c * c));
+                }
+            }
 
             tww = std.math.max(tww, delta_red);
             return InducedTwinWidthPotential{ .tww = tww, .cumulative_red_edges = red_potential, .delta_red_edges = new_red_edges };
@@ -790,12 +788,12 @@ pub fn Graph(comptime T: type) type {
                     if (!try self.node_list[survivor].addRedEdgeExists(self.allocator, item)) {
                         try self.node_list[item].addRedEdge(self.allocator, survivor);
                         self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
-                        try self.min_hash.changedEdge(item, self, .{.removed = erased,.red=true, .added = survivor,.added_red=true});
+                        try self.min_hash.changedEdge(item, self, .{ .removed = erased, .red = true, .added = survivor, .added_red = true });
                     } else {
                         // Inform about the removal of the red edge
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).redToDeleted(item));
-                        try self.min_hash.changedEdge(item, self, .{.removed = erased,.red=true});
-                  }
+                        try self.min_hash.changedEdge(item, self, .{ .removed = erased, .red = true });
+                    }
                 } else {
                     self.last_merge_first_level_merge = true;
                 }
@@ -821,10 +819,10 @@ pub fn Graph(comptime T: type) type {
 
                         self.last_merge_red_edges_erased.append(self.allocator, item) catch unreachable;
                         //self.min_hash.addTransferedEdge(item,true,false);
-                        try self.min_hash.changedEdge(item, self, .{.removed = erased,.red=false, .added = survivor, .added_red = true});
+                        try self.min_hash.changedEdge(item, self, .{ .removed = erased, .red = false, .added = survivor, .added_red = true });
                     } else {
-                        try self.min_hash.changedEdge(item, self, .{.removed = erased,.red=false});
-                	}
+                        try self.min_hash.changedEdge(item, self, .{ .removed = erased, .red = false });
+                    }
                 }
                 // Came from survivor
                 else {
@@ -833,11 +831,11 @@ pub fn Graph(comptime T: type) type {
 
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).blackToDeleted(item));
 
-                        try self.min_hash.changedEdge(item, self, .{.removed = survivor,.red=false});
+                        try self.min_hash.changedEdge(item, self, .{ .removed = survivor, .red = false });
                     } else {
                         // Did not exist therefore turned
                         try seq.red_edge_stack.addEdge(self.failing_allocator.allocator(), red_edge_stack.NewRedEdge(T).blackToRedOwn(item));
-                        try self.min_hash.changedEdge(item, self, .{.removed = survivor,.red=false, .added= survivor, .added_red = true});
+                        try self.min_hash.changedEdge(item, self, .{ .removed = survivor, .red = false, .added = survivor, .added_red = true });
                     }
                     try self.node_list[item].addRedEdge(self.allocator, survivor);
 
@@ -861,12 +859,11 @@ pub fn Graph(comptime T: type) type {
 
             var black_iter_sur = self.node_list[survivor].black_edges.iterator();
             while (black_iter_sur.next()) |t| {
-                try self.min_hash.changedEdge(t, self, .{.removed = erased,.red=false});
+                try self.min_hash.changedEdge(t, self, .{ .removed = erased, .red = false });
             }
 
             try self.min_hash.rehashNode(survivor, self);
             try self.min_hash.removeNode(erased);
-
 
             tww = std.math.max(tww, @intCast(T, self.node_list[survivor].red_edges.cardinality()));
             try seq.addContraction(self.allocator, erased, survivor, std.math.max(tww, seq.getTwinWidth()));
@@ -889,7 +886,7 @@ pub fn Graph(comptime T: type) type {
                 try org_graph.append(try exact_bs.matrixGraphUnionFromInducedSubGraph(T, &cc.subgraph, self.allocator));
             }
 
-            var heu_tww = @intCast(u32, try self.solveGreedy());
+            var heu_tww = @intCast(u32, try self.solveGreedy(30));
 
             if (true) {
                 std.debug.print("Heuristic TWW: {d}\n", .{heu_tww});
@@ -986,32 +983,48 @@ pub fn Graph(comptime T: type) type {
             }
         }
 
-        pub fn solveGreedy(self: *Self) !T {
+        pub fn solveGreedy(self: *Self, timeout_seconds: ?u64) !T {
             const K = 20;
             const P = 100;
 
             // NOTICE: This function is single pass at the moment!
             var solver = try solver_resources.SolverResources(T, K, P).init(self);
             defer solver.deinit(self.allocator);
-            var cc_iter = self.connected_components_min_heap.iterator();
-            var tww: T = 0;
+
+						var time = try std.time.Instant.now();
+
+						var seed:u64 = 19;
 
             self.contraction.reset();
-            while (cc_iter.next()) |cc| {
+            while (self.connected_components_min_heap.removeOrNull()) |cc| {
                 // Only for small exact graphs
 
                 var cc_inst = &self.connected_components.items[cc.index];
+								try cc_inst.resetGraph();
 
                 if (T == u8 and cc_inst.subgraph.nodes.len < 128) {
-                    var cc_tww = try cc_inst.solveGreedy(K, P, &solver);
+                    var cc_tww = try cc_inst.solveGreedy(K, P, &solver,seed);
                     cc_inst.tww = cc_tww;
-                    tww = std.math.max(cc_tww, tww);
                 } else {
-                    var cc_tww = try cc_inst.solveGreedyTopK(K, P, &solver);
+                    var cc_tww = try cc_inst.solveGreedyTopK(K, P, &solver,seed);
                     cc_inst.tww = cc_tww;
-                    tww = std.math.max(cc_tww, tww);
                 }
+								seed += 1009;
+								try self.connected_components_min_heap.add(connected_components.ConnectedComponentIndex(T) {
+									.index = cc.index,
+									.tww = cc_inst.tww,
+								});
+
+								if(timeout_seconds) |ts| {
+									const now = try std.time.Instant.now();
+									if(now.since(time) > 1000_000_000*ts) {
+										break;
+									}
+								}
             }
+
+						const index = self.connected_components_min_heap.peek().?;
+						const tww = self.connected_components.items[index.index].tww;
 
             try self.combineContractionSequences();
 
@@ -1080,8 +1093,8 @@ pub fn Graph(comptime T: type) type {
                     node.black_edges.deinit(allocator);
                     node.red_edges.deinit(allocator);
                     node.high_degree_node = null;
-										node.total_weight = @intToFloat(f32,node.cardinality());
-										node.delta_potential_weighted_jaccard = 0.0;
+                    node.total_weight = @intToFloat(f32, node.cardinality());
+                    node.delta_potential_weighted_jaccard = 0.0;
                 }
                 allocator.free(node_list);
             }
@@ -1106,7 +1119,7 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 36, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 7).init(graph_instance.allocator, 120, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
             return graph_instance;
         }

@@ -224,7 +224,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
             contractions_left.* -= 1;
 
-            var last_evoked_twin_width = try self.graph.addContractionNoMinHash(min_contraction.erased, min_contraction.survivor, seq);
+            var last_evoked_twin_width = try self.graph.addContraction(min_contraction.erased, min_contraction.survivor, seq);
             total_tww = std.math.max(last_evoked_twin_width, total_tww);
 
             // Reduce leafes if one was created
@@ -236,7 +236,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                     while (parent_node_iter.next()) |item| {
                         if (item == min_contraction.survivor) continue;
                         if (self.graph.node_list[item].isLeaf()) {
-                            last_evoked_twin_width = try self.graph.addContractionNoMinHash(item, min_contraction.survivor, seq);
+                            last_evoked_twin_width = try self.graph.addContraction(item, min_contraction.survivor, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
                             enable_follow_up_merge.* = false;
@@ -255,7 +255,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                 while (parent_node_iter.next()) |item| {
                     if (self.graph.node_list[item].isLeaf()) {
                         if (first_leaf) |k| {
-                            last_evoked_twin_width = try self.graph.addContractionNoMinHash(k, item, seq);
+                            last_evoked_twin_width = try self.graph.addContraction(k, item, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
                             enable_follow_up_merge.* = false;
@@ -980,13 +980,13 @@ pub fn InducedSubGraph(comptime T: type) type {
                 // Reset all variables which were set to select the best postponed move
 
 								var used_min_hash_move:bool = false;
-								//if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
-								//	const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
-								//	if(t.isLess(selection.potential,seq.getTwinWidth())) {
-								//		min_contraction = best;
-								//		used_min_hash_move = true;
-								//	}
-								//}
+								if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
+									const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
+									if(t.isLess(selection.potential,seq.getTwinWidth())) {
+										min_contraction = best;
+										used_min_hash_move = true;
+									}
+								}
 
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();

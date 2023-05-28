@@ -216,7 +216,7 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
         allocator: std.mem.Allocator,
         graph: *graph_mod.Graph(T),
 
-        pub const CANIDATE_COUNT: u32 = 200;
+        pub const CANIDATE_COUNT: u32 = 1000;
 
         pub const WeightedItem = struct {
             index: u32,
@@ -290,6 +290,7 @@ pub fn MinHashSimilarityWeighted(comptime T: type, comptime B: u32) type {
                         pt.* -= 1;
                         if (pt.* == 0) {
                             _ = self.hit_map.remove(unique_key);
+														_ = self.tww_nb.swapRemove(unique_key);
                         } else {
                             _ = self.similarity_cardinality[pt.* - 1].put(self.allocator, unique_key, {}) catch @panic("Could not change similarity");
                         }
@@ -783,7 +784,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         allocator: std.mem.Allocator,
         graph: *graph_mod.Graph(T),
 
-        pub const CANIDATE_COUNT: u32 = 1000;
+        pub const CANIDATE_COUNT: u32 = 500;
 
         const NodeIteratorSplitRedBlack = struct {
             number_of_nodes: u32,
@@ -830,26 +831,40 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
         fn removedCallback(self: *Self, key: u32, list: ?*std.AutoArrayHashMapUnmanaged(u32, void)) void {
             if (list) |l| {
-                var iter = l.iterator();
-                while (iter.next()) |partner_ptr| {
-                    const partner = partner_ptr.key_ptr.*;
-                    if (partner == key) continue;
+								var i:usize = 0;
+                while (i < l.count()) {
+										const partner = l.keys()[i];
+                    if (partner == key) {
+											i += 1;
+											continue;
+										}
                     const unique_key = Self.calculateUniqueKey(partner, key);
+										if(self.graph.erased_nodes.get(partner) or self.graph.erased_nodes.get(key)) {
+											if(self.hit_map.fetchRemove(unique_key)) |pt| {
+                      	_ = self.similarity_cardinality[pt.value - 1].swapRemove(unique_key);
+											}
+											_ = self.tww_nb.swapRemove(unique_key);
+											i+=1;
+											continue;
+										}
+
                     if (self.hit_map.getPtr(unique_key)) |pt| {
+												i+=1;
                         _ = self.similarity_cardinality[pt.* - 1].swapRemove(unique_key);
                         pt.* -= 1;
                         if (pt.* == 0) {
                             _ = self.hit_map.remove(unique_key);
+														_ = self.tww_nb.swapRemove(unique_key);
                         } else {
                             _ = self.similarity_cardinality[pt.* - 1].put(self.allocator, unique_key, {}) catch @panic("Could not change similarity");
                         }
                         // Untrack this node now!
-                        if ((pt.* + 1) == self.similarity_threshold) {
+                        if ((pt.* + 1) <= self.similarity_threshold) {
                             // Remove from similarity list
                             self.untrackNodePair(partner, key) catch @panic("Error untrack node pair!");
                         }
                     } else {
-                        @panic("Should not happen!");
+											@panic("Should not happen remove!");
                     }
                 }
             }
@@ -857,10 +872,14 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
         fn addedCallback(self: *Self, key: u32, list: ?*std.AutoArrayHashMapUnmanaged(u32, void)) void {
             if (list) |l| {
-                var iter = l.iterator();
-                while (iter.next()) |partner_ptr| {
-                    const partner = partner_ptr.key_ptr.*;
-                    if (partner == key) continue;
+								var i:usize = 0;
+                while (i < l.count()) {
+										const partner = l.keys()[i];
+										i+=1;
+                    if (partner == key) {
+											continue;
+										}
+										if(self.graph.erased_nodes.get(partner)) continue;
                     const unique_key = Self.calculateUniqueKey(partner, key);
                     if (self.hit_map.getPtr(unique_key)) |pt| {
                         _ = self.similarity_cardinality[pt.* - 1].swapRemove(unique_key);
@@ -872,6 +891,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                         }
                     } else {
                         self.hit_map.put(self.allocator, unique_key, 1) catch @panic("Out of memory!");
+                        self.similarity_cardinality[0].put(self.allocator, unique_key, {}) catch @panic("Out of memory!");
                     }
                 }
             }
@@ -879,10 +899,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
         fn trackNodePair(self: *Self, erased: u32, survivor: u32) !void {
             var unique_key = Self.calculateUniqueKey(erased, survivor);
-            if (!self.tww_nb.contains(unique_key)) {
-                //var tww = self.graph.calculateMaxTwwScore(@intCast(T, erased), @intCast(T, survivor));
-                try self.tww_nb.put(self.allocator, unique_key, 0);
-            }
+            try self.tww_nb.put(self.allocator, unique_key, 0);
         }
 
         fn untrackNodePair(self: *Self, erased: u32, survivor: u32) !void {
@@ -966,7 +983,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
             const split = self.bands.len / 3;
 
-            for (0..std.math.min(nodes.len,10_000)) |index| {
+            for (0..nodes.len) |index| {
                 const i = nodes[index];
 
                 if (graph.erased_nodes.get(i)) continue;
@@ -1026,7 +1043,6 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                 }
             }
 
-
             var entries = self.hit_map.iterator();
             while (entries.next()) |value| {
                 try self.similarity_cardinality[value.value_ptr.* - 1].put(self.allocator, value.key_ptr.*, {});
@@ -1055,19 +1071,6 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         pub fn getBestMove(self: *Self, graph: *graph_mod.Graph(T), current_tww: T) !?contraction.Contraction(T) {
             var min_cont: ?contraction.Contraction(T) = null;
 
-            {
-                var i: usize = 0;
-                while (i < self.tww_nb.count()) {
-                    const key = self.tww_nb.keys()[i];
-                    const mv = Self.keyIntoMove(key);
-                    if (graph.erased_nodes.get(mv.erased) or graph.erased_nodes.get(mv.survivor)) {
-                        _ = self.tww_nb.swapRemove(key);
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-
             // Fill up
             outer: for (1..self.bands.len + 1) |id| {
                 const index = @intCast(u32, self.bands.len - id);
@@ -1088,9 +1091,6 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             var iter = self.tww_nb.iterator();
             while (iter.next()) |it| {
                 const mv = Self.keyIntoMove(it.key_ptr.*);
-                if (graph.erased_nodes.get(mv.erased) or graph.erased_nodes.get(mv.survivor)) {
-                    continue;
-                }
                 var tww = graph.calculateInducedTwwPotential(mv.erased, mv.survivor, &best_tww, current_tww);
 
                 if (tww.isLess(best_tww, current_tww)) {

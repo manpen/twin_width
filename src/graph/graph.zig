@@ -72,7 +72,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 4),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 5),
 
         // Usually the exact tries to find a solution that is strictly better than
         // the heuristic one (oftentimes only proving a lower bound). If set to true,
@@ -990,7 +990,7 @@ pub fn Graph(comptime T: type) type {
 				};
 
         pub fn solveGreedy(self: *Self, solving_options: SolvingOptions) !T {
-            const K = 10;
+            const K = 15;
             const P = 100;
 
 						if(solving_options.timeout_seconds != null and solving_options.single_pass == true) return GraphError.ConflictingSolverOptions;
@@ -1130,7 +1130,7 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 9, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 5).init(graph_instance.allocator, 72, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
             return graph_instance;
         }

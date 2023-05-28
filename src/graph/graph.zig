@@ -18,7 +18,7 @@ const exact_bs = @import("../exact/bootstrapping.zig");
 const pace_2023 = @import("../pace_2023/pace_fmt.zig");
 
 pub const GraphError = error{ FileNotFound, //
-NotPACEFormat, GraphTooLarge, MisformedEdgeList, InvalidContractionOneNodeErased, ContractionOverflow, NoContractionLeft, NegativeNumberOfLeafes, ExactSuboptimal };
+NotPACEFormat, GraphTooLarge, MisformedEdgeList, InvalidContractionOneNodeErased, ContractionOverflow, NoContractionLeft, NegativeNumberOfLeafes, ExactSuboptimal, ConflictingSolverOptions };
 
 pub fn Graph(comptime T: type) type {
     comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -886,7 +886,7 @@ pub fn Graph(comptime T: type) type {
                 try org_graph.append(try exact_bs.matrixGraphUnionFromInducedSubGraph(T, &cc.subgraph, self.allocator));
             }
 
-            var heu_tww = @intCast(u32, try self.solveGreedy(30));
+            var heu_tww = @intCast(u32, try self.solveGreedy(.{.timeout_seconds = 30}));
 
             if (true) {
                 std.debug.print("Heuristic TWW: {d}\n", .{heu_tww});
@@ -983,9 +983,18 @@ pub fn Graph(comptime T: type) type {
             }
         }
 
-        pub fn solveGreedy(self: *Self, timeout_seconds: ?u64) !T {
-            const K = 20;
+
+				pub const SolvingOptions = struct {
+					timeout_seconds: ?u64 = null,
+					single_pass:bool = true
+				};
+
+        pub fn solveGreedy(self: *Self, solving_options: SolvingOptions) !T {
+            const K = 10;
             const P = 100;
+
+						if(solving_options.timeout_seconds != null and solving_options.single_pass == true) return GraphError.ConflictingSolverOptions;
+						const timeout_seconds = solving_options.timeout_seconds;
 
             // NOTICE: This function is single pass at the moment!
             var solver = try solver_resources.SolverResources(T, K, P).init(self);
@@ -997,17 +1006,18 @@ pub fn Graph(comptime T: type) type {
 
             self.contraction.reset();
             while (self.connected_components_min_heap.removeOrNull()) |cc| {
-                // Only for small exact graphs
+								if(solving_options.single_pass and self.connected_components.items[cc.index].tww != self.connected_components.items[cc.index].subgraph.nodes.len-1) {
+									try self.connected_components_min_heap.add(cc);
+									break;
+								}
 
                 var cc_inst = &self.connected_components.items[cc.index];
 								try cc_inst.resetGraph();
 
                 if (T == u8 and cc_inst.subgraph.nodes.len < 128) {
-                    var cc_tww = try cc_inst.solveGreedy(K, P, &solver,seed);
-                    cc_inst.tww = cc_tww;
+                    _ = try cc_inst.solveGreedy(K, P, &solver,seed);
                 } else {
-                    var cc_tww = try cc_inst.solveGreedyTopK(K, P, &solver,seed);
-                    cc_inst.tww = cc_tww;
+                    _ = try cc_inst.solveGreedyTopK(K, P, &solver,seed);
                 }
 								seed += 1009;
 								try self.connected_components_min_heap.add(connected_components.ConnectedComponentIndex(T) {
@@ -1024,6 +1034,7 @@ pub fn Graph(comptime T: type) type {
             }
 
 						const index = self.connected_components_min_heap.peek().?;
+						// Tww is twin width of the connected component with the largest twin width
 						const tww = self.connected_components.items[index.index].tww;
 
             try self.combineContractionSequences();
@@ -1043,7 +1054,7 @@ pub fn Graph(comptime T: type) type {
 
             //TODO: Add some errdefer's here
 
-            var graph = Self{
+            var graph = Self {
                 .number_of_nodes = number_of_nodes,
                 .number_of_edges = 0,
                 .node_list = node_list,

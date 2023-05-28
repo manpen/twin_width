@@ -224,7 +224,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Adjust the contractions left and maximal number of postpones allowed (Note this is only problematic in the case of contractions_left < P)
             contractions_left.* -= 1;
 
-            var last_evoked_twin_width = try self.graph.addContraction(min_contraction.erased, min_contraction.survivor, seq);
+            var last_evoked_twin_width = try self.graph.addContractionNoMinHash(min_contraction.erased, min_contraction.survivor, seq);
             total_tww = std.math.max(last_evoked_twin_width, total_tww);
 
             // Reduce leafes if one was created
@@ -236,7 +236,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                     while (parent_node_iter.next()) |item| {
                         if (item == min_contraction.survivor) continue;
                         if (self.graph.node_list[item].isLeaf()) {
-                            last_evoked_twin_width = try self.graph.addContraction(item, min_contraction.survivor, seq);
+                            last_evoked_twin_width = try self.graph.addContractionNoMinHash(item, min_contraction.survivor, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
                             enable_follow_up_merge.* = false;
@@ -255,7 +255,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                 while (parent_node_iter.next()) |item| {
                     if (self.graph.node_list[item].isLeaf()) {
                         if (first_leaf) |k| {
-                            last_evoked_twin_width = try self.graph.addContraction(k, item, seq);
+                            last_evoked_twin_width = try self.graph.addContractionNoMinHash(k, item, seq);
                             total_tww = std.math.max(last_evoked_twin_width, total_tww);
                             contractions_left.* -= 1;
                             enable_follow_up_merge.* = false;
@@ -871,9 +871,54 @@ pub fn InducedSubGraph(comptime T: type) type {
             return seq.getTwinWidth();
         }
 
+				pub const MadeMove = struct {
+					contraction: contraction.Contraction(T),
+					tww: T,
+					pub fn compare(ctx: void, lhs: MadeMove, rhs: MadeMove) std.math.Order {
+						_ = ctx;
+						return std.math.order(lhs.tww, rhs.tww);
+					}
+	 			};
+
+				pub fn refineContractionSequence(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), seed: u64) !T {
+					var pq_move = std.PriorityQueue(MadeMove, void, MadeMove.compare).init(self.graph.allocator, {});
+
+					var backtrack_moves:u32 = @intCast(u32,self.nodes.len-1);
+
+
+					while(true) {
+						pq_move.len = 0;
+						var added_factor: T = @intCast(T,self.nodes.len-1);
+						var upper_bound: T = seq.getTwinWidth();
+						var ths:u32 = 0;
+						while(ths < backtrack_moves) {
+							if(seq.lastContraction()) |ct| {
+								try pq_move.add(MadeMove {
+										.contraction = ct,
+										.tww = self.graph.calculateTwwOfMergeSurvivor(ct.erased,ct.survivor)+added_factor
+								});
+							}
+
+							ths+=1;
+							try self.graph.revertLastContraction(seq);
+							added_factor -= 1;
+						}
+
+						backtrack_moves -= 1;
+
+						std.debug.print("Twin width backtracked {} remaining nodes {}\n",.{seq.getTwinWidth(),self.nodes.len-seq.write_ptr});
+						if(pq_move.removeOrNull()) |mv| {
+							_ = try self.graph.addContractionNoMinHash(mv.contraction.erased,mv.contraction.survivor,seq);
+							std.debug.print("Twin width {}\n",.{seq.getTwinWidth()});
+							const tww = try self.solveGreedyTopK(K,P,seq,solver,false,seed+mv.contraction.erased,upper_bound);
+							std.debug.print("new twin width {}\n",.{tww});
+						}
+					}
+					return seq.getTwinWidth();
+				}
+
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), find_articulation_points: bool, seed: u64, upper_bound: u32) !T {
 						_ = upper_bound;
-						std.debug.print("Call solver!\n",.{});
             _ = find_articulation_points;
             // Use once at the beginning later we will only consider merges which involve the survivor of the last merge
             // Paths might be dangerous
@@ -927,9 +972,6 @@ pub fn InducedSubGraph(comptime T: type) type {
 
             var enable_follow_up_merge: bool = true;
 
-            const threshold_potential = 2 * solver.priority_queue.priority_queue.len / 3;
-            _ = threshold_potential;
-
             while (contractions_left > exhaustive_solving_thresh) {
                 var prio_item = try solver.priority_queue.removeNext(total_tww);
                 var first_node = prio_item;
@@ -980,13 +1022,13 @@ pub fn InducedSubGraph(comptime T: type) type {
                 // Reset all variables which were set to select the best postponed move
 
 								var used_min_hash_move:bool = false;
-								if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
-									const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
-									if(t.isLess(selection.potential,seq.getTwinWidth())) {
-										min_contraction = best;
-										used_min_hash_move = true;
-									}
-								}
+								//if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
+								//	const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
+								//	if(t.isLess(selection.potential,seq.getTwinWidth())) {
+								//		min_contraction = best;
+								//		used_min_hash_move = true;
+								//	}
+								//}
 
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
@@ -1059,7 +1101,6 @@ pub fn InducedSubGraph(comptime T: type) type {
                         }
                     }
 
-										std.debug.print("Total tww {}\n",.{total_tww});
                     return total_tww;
                 }
             }
@@ -1088,7 +1129,6 @@ pub fn InducedSubGraph(comptime T: type) type {
                             first_left_node = bounded_array.pop();
                         }
                     }
-										std.debug.print("Total tww {}\n",.{total_tww});
 
                     return total_tww;
                 }

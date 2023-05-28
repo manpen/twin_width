@@ -48,7 +48,7 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
     defer loaded_graph.deinit();
 
     _ = try loaded_graph.findAllConnectedComponents();
-    const tww = loaded_graph.solveGreedy(50) catch |err| {
+    const tww = loaded_graph.solveGreedy(.{.single_pass = true}) catch |err| {
         std.debug.print("Error {}\n", .{err});
         return err;
     };
@@ -203,7 +203,7 @@ pub fn main() !void {
     std.sort.sort([]u8, file_list.items, {}, lessThanU8);
 
     var cumulative: u32 = 3;
-    var skip: u32 = 0;
+    var skip: u32 = 1;
     for (file_list.items) |name| {
         if (skip > 0) {
             skip -= 1;

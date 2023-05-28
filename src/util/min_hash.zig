@@ -966,7 +966,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
             const split = self.bands.len / 3;
 
-            for (0..nodes.len) |index| {
+            for (0..std.math.min(nodes.len,10_000)) |index| {
                 const i = nodes[index];
 
                 if (graph.erased_nodes.get(i)) continue;
@@ -1025,6 +1025,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                     }
                 }
             }
+
 
             var entries = self.hit_map.iterator();
             while (entries.next()) |value| {

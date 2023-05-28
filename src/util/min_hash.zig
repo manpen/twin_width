@@ -1122,6 +1122,18 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
             return Self{ .bands = bands, .hit_map = hit_map, .allocator = allocator, .number_of_nodes = number_of_nodes, .graph = undefined, .tww_nb = tww_nb, .similarity_cardinality = similarity_cardinality, .similarity_threshold = similarity_threshold };
         }
+
+        pub fn deinit(self: *Self) void {
+            self.allocator.free(self.similarity_cardinality);
+
+            self.tww_nb.deinit(self.allocator);
+            self.hit_map.deinit(self.allocator);
+            for (0..self.bands.len) |i| {
+                self.bands[self.bands.len - i - 1].deinit();
+            }
+
+            self.allocator.free(self.bands);
+        }
     };
 }
 

@@ -1194,6 +1194,8 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub fn deinit(self: *Self) void {
+            self.min_hash.deinit();
+
             for (self.node_list) |*node| {
                 node.black_edges.deinit(self.allocator);
                 node.red_edges.deinit(self.allocator);

@@ -6,7 +6,7 @@ const empty_sigset = os.empty_sigset;
 const SIGTERM: u6 = 15;
 const BUF_SIZE = 32768;
 
-var cc_slice: [][]u32 = undefined;
+pub var cc_slice: [][]u32 = undefined;
 
 // Writes the current solution of cc_slice into stdout. all errors all discarded, due to callconv(.C)
 // requirement they can not be propagated as a return type (!void).

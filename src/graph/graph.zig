@@ -1160,6 +1160,7 @@ pub fn Graph(comptime T: type) type {
             var cc_solutions = try self.allocator.alloc([]u32, non_trivial_components + 1);
             for (0..non_trivial_components) |i| {
                 cc_solutions[i] = self.connected_components.items[i].contraction_slice;
+                self.connected_components.items[i].own_slice_index = @intCast(u32,i);
             }
             const items = self.trivial_connected_component_contraction_sequence.items;
             const last_index = non_trivial_components;

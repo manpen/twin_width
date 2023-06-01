@@ -262,6 +262,7 @@ pub fn MinHashBand(comptime B: u32) type {
         }
 
         pub fn deinit(self: *Self) void {
+            self.initialized_nodes.deinit();
             var iter = self.collisions.iterator();
             while (iter.next()) |item| {
                 item.value_ptr.deinit(self.allocator);
@@ -564,10 +565,21 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
             var sim_pq = updateable_pq.UpdateablePriorityQueue(u64, SimilarityPriority, void, SimilarityPriority.compare).init(allocator, {});
 
-            return Self{ .bands = bands, .hit_map = hit_map, .allocator = allocator, .number_of_nodes = number_of_nodes, .graph = undefined, .sim_pq = sim_pq, .canidate_count = 20, .canidate_list = try std.ArrayListUnmanaged(PriorityItem).initCapacity(allocator, number_of_nodes) };
+            return Self{
+                .bands = bands, //
+                .hit_map = hit_map,
+                .allocator = allocator,
+                .number_of_nodes = number_of_nodes,
+                .graph = undefined,
+                .sim_pq = sim_pq,
+                .canidate_count = 20,
+                .canidate_list = try std.ArrayListUnmanaged(PriorityItem).initCapacity(allocator, number_of_nodes),
+            };
         }
 
         pub fn deinit(self: *Self) void {
+            self.canidate_list.deinit(self.allocator);
+
             self.hit_map.deinit(self.allocator);
             for (0..self.bands.len) |i| {
                 self.bands[self.bands.len - i - 1].deinit();

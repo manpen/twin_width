@@ -204,7 +204,7 @@ pub fn main() !void {
     std.sort.sort([]u8, file_list.items, {}, lessThanU8);
 
     var cumulative: u32 = 3;
-    var skip: u32 = 92;
+    var skip: u32 = 0;
     for (file_list.items) |name| {
         if (skip > 0) {
             skip -= 1;

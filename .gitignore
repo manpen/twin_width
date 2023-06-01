@@ -3,3 +3,4 @@ zig-cache/*
 instances/*
 .idea
 *.log
+__pycache__/*

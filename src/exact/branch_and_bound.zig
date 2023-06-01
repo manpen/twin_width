@@ -65,7 +65,7 @@ const FeatureComplements: bool = false; // BROKEN
 const FeatureOuterPathPruning: bool = FeaturePruning and true;
 
 const FeatureTryLBFirst: bool = true;
-const BudgetSubgraphLB: u64 = 10_000; // ms
+const BudgetSubgraphLB: u64 = 20_000; // ms
 
 const SolSummary = struct {
     tww: Node,

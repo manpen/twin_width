@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 import signal
@@ -6,6 +7,7 @@ import time
 import csv
 import argparse
 import pace_verifier
+
 
 def validate_directories(dir1_path, binary_path, dir2_path):
     # Validate the paths
@@ -24,6 +26,7 @@ def validate_directories(dir1_path, binary_path, dir2_path):
         return False
 
     return True
+
 
 def run_binary_with_files(input_dir, binary_path, output_dir, timeout, num_threads, kill_buffer):
     # Initialize counters and process list
@@ -53,13 +56,16 @@ def run_binary_with_files(input_dir, binary_path, output_dir, timeout, num_threa
                     writer.writerow([os.path.basename(file_path), runtime])
                     processes.pop(i)
                     processed_files += 1
-                    print(f"Process terminated with runtime: {runtime:.2f} seconds")
+                    print(
+                        f"Process terminated with runtime: {runtime:.2f} seconds")
 
             # Replace terminated processes with new ones (if possible)
             while len(processes) < num_threads and file_stack:
                 file_path = file_stack.pop()
-                stdout_path = os.path.join(output_dir, f"{os.path.basename(file_path)}.out")
-                stderr_path = os.path.join(output_dir, f"{os.path.basename(file_path)}.err")
+                stdout_path = os.path.join(
+                    output_dir, f"{os.path.basename(file_path)}.out")
+                stderr_path = os.path.join(
+                    output_dir, f"{os.path.basename(file_path)}.err")
 
                 cmd = [binary_path]
                 with open(file_path, "r") as input_file, \
@@ -88,6 +94,8 @@ def run_binary_with_files(input_dir, binary_path, output_dir, timeout, num_threa
     print(f"All processes terminated.")
 
 # Process files in dir1_path and dir2_path and create a results.csv file
+
+
 def process_files(dir1_path, dir2_path):
     results = []
     for filename in os.listdir(dir1_path):
@@ -112,6 +120,8 @@ def process_files(dir1_path, dir2_path):
         writer.writerows(results)
 
 # Main function
+
+
 def main(args):
     input_dir = args.input
     binary_path = args.binary
@@ -123,7 +133,8 @@ def main(args):
 
     # Skip the execution of the solver if only the verifier should be called
     if not verify_only:
-        run_binary_with_files(input_dir, binary_path, output_dir, timeout, num_threads, kill_buffer)
+        run_binary_with_files(input_dir, binary_path,
+                              output_dir, timeout, num_threads, kill_buffer)
 
     process_files(input_dir, output_dir)
 
@@ -131,11 +142,17 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", required=True, help="Input directory")
-    parser.add_argument("-o", "--output", required=True, help="Output directory")
-    parser.add_argument("-t", "--timeout", type=int, default=300, help="Timeout in seconds (default: 300)")
-    parser.add_argument("-n", "--num_threads", type=int, default=4, help="Number of threads (default: 4)")
-    parser.add_argument("-k", "--kill_buffer", type=int, default=5, help="Kill buffer in seconds (default: 5)")
-    parser.add_argument("--verify", action="store_true", default=False, help="Verify only, no binary execution")
-    parser.add_argument("--binary", type=str, default=False, required=True, help="Binary path of solver")
+    parser.add_argument("-o", "--output", required=True,
+                        help="Output directory")
+    parser.add_argument("-t", "--timeout", type=int, default=300,
+                        help="Timeout in seconds (default: 300)")
+    parser.add_argument("-n", "--num_threads", type=int,
+                        default=4, help="Number of threads (default: 4)")
+    parser.add_argument("-k", "--kill_buffer", type=int,
+                        default=5, help="Kill buffer in seconds (default: 5)")
+    parser.add_argument("--verify", action="store_true",
+                        default=False, help="Verify only, no binary execution")
+    parser.add_argument("--binary", type=str, default=False,
+                        required=True, help="Binary path of solver")
     args = parser.parse_args()
     main(args)

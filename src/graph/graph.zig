@@ -869,11 +869,6 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub fn solveExact(self: *Self) !T {
-            const K = 20;
-            _ = K;
-            const P = 100;
-            _ = P;
-
             var org_graph = try std.ArrayList(exact_bs.MatrixGraphFromInducedSubGraph).initCapacity(self.allocator, self.connected_components.items.len);
             defer org_graph.deinit();
             defer for (org_graph.items) |*item| item.deinit();
@@ -883,7 +878,7 @@ pub fn Graph(comptime T: type) type {
             }
 
             var heu_tww = @intCast(u32, try self.solveGreedy(.{ .single_pass = true }));
-            if (self.number_of_nodes > 110) {
+            if (heu_tww > 1 and self.number_of_nodes > 110) {
                 heu_tww = @min(heu_tww, try self.solveGreedy(.{ .single_pass = false, .timeout_seconds = 120 }));
             }
 

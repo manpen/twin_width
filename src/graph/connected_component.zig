@@ -64,7 +64,7 @@ pub fn ConnectedComponent(comptime T: type) type {
         }
 
         pub fn solveSweepingTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), probing: bool, seed: u64) !T {
-            const result = try self.subgraph.solveSweepingSolverTopK(K, P, &self.current_contraction_seq, solver, probing,seed);
+            const result = try self.subgraph.solveSweepingSolverTopK(K, P, &self.current_contraction_seq, solver, probing, seed);
             if (result < self.tww) {
                 try self.update_best();
                 self.tww = result;
@@ -84,12 +84,12 @@ pub fn ConnectedComponent(comptime T: type) type {
         }
 
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), seed: u64) !T {
-            var result = try self.subgraph.solveGreedyTopK(K, P, &self.current_contraction_seq, solver, true, seed,self.tww);
+            var result = try self.subgraph.solveGreedyTopK(K, P, &self.current_contraction_seq, solver, true, seed, self.tww);
 
             if (result < self.tww) {
-            	try self.update_best();
-            	self.tww = result;
-						}
+                try self.update_best();
+                self.tww = result;
+            }
 
             if (self.tww < 200 or self.subgraph.nodes.len < 3700) {
                 if (self.subgraph.nodes.len > 2_000_000 and self.tww >= 90) {} else {

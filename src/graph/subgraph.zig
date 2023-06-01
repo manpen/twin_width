@@ -147,7 +147,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                 }
             }
 
-						remaining_nodes[min_index_erased] = remaining_nodes[remaining_nodes.len-1];
+            remaining_nodes[min_index_erased] = remaining_nodes[remaining_nodes.len - 1];
 
             return min_contraction;
         }
@@ -821,21 +821,21 @@ pub fn InducedSubGraph(comptime T: type) type {
                     if (solver.node_mask_bitset.get(item) and self.nodes.len > 10000) continue;
                     if (self.graph.erased_nodes.get(item)) @panic("Should never happen!");
                     solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-                    var selection = try self.selectBestMove(K, P, item, solver, total_tww,seed);
+                    var selection = try self.selectBestMove(K, P, item, solver, total_tww, seed);
 
-										if (selection.potential.tww <= sweeping_thresh) {
-											_ = try self.graph.addContractionNoMinHash(item, selection.target, seq);
-											if (self.graph.last_merge_first_level_merge) {
-												total_lvl1_contractions += 1;
-											}
-											contractions_left -= 1;
-											if (contractions_left == 0) break :outer;
+                    if (selection.potential.tww <= sweeping_thresh) {
+                        _ = try self.graph.addContractionNoMinHash(item, selection.target, seq);
+                        if (self.graph.last_merge_first_level_merge) {
+                            total_lvl1_contractions += 1;
+                        }
+                        contractions_left -= 1;
+                        if (contractions_left == 0) break :outer;
 
-											remaining_nodes -= 1;
-											solver.scratch_node_list[@intCast(u32, index)] = solver.scratch_node_list[remaining_nodes];
-											// Swap remove node
-											total_contractions += 1;
-										}
+                        remaining_nodes -= 1;
+                        solver.scratch_node_list[@intCast(u32, index)] = solver.scratch_node_list[remaining_nodes];
+                        // Swap remove node
+                        total_contractions += 1;
+                    }
                     solver.node_mask_bitset.set(item);
                     solver.node_mask_bitset.set(selection.target);
                     min_tww = std.math.min(min_tww, selection.potential.tww);
@@ -858,7 +858,6 @@ pub fn InducedSubGraph(comptime T: type) type {
                             if (probing and (((cumulative_tww / visited) > 50) or max_tww > 50)) return std.math.maxInt(T);
                         }
                     }
-
                 }
                 first_iteration = false;
 
@@ -872,14 +871,14 @@ pub fn InducedSubGraph(comptime T: type) type {
         }
 
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), find_articulation_points: bool, seed: u64, upper_bound: u32) !T {
-						_ = upper_bound;
-						std.debug.print("Call solver!\n",.{});
+            _ = upper_bound;
+            std.debug.print("Call solver!\n", .{});
             _ = find_articulation_points;
             // Use once at the beginning later we will only consider merges which involve the survivor of the last merge
             // Paths might be dangerous
             try self.reduceLeafesAndPaths(K, P, seq, solver, false);
 
-            try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph,seed);
+            try self.graph.min_hash.bootstrapNodes(self.nodes, self.graph, seed);
 
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();
@@ -935,7 +934,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                 var first_node = prio_item;
 
                 solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-                var selection = try self.selectBestMove(K, P, first_node, solver, total_tww,seed);
+                var selection = try self.selectBestMove(K, P, first_node, solver, total_tww, seed);
 
                 // Store the best move up to now in the case of multiple postpones
                 if (selection.potential.isLess(best_contraction_potential_postponed, total_tww)) {
@@ -979,14 +978,14 @@ pub fn InducedSubGraph(comptime T: type) type {
 
                 // Reset all variables which were set to select the best postponed move
 
-								var used_min_hash_move:bool = false;
-								if(try self.graph.min_hash.getBestMove(self.graph,seq.getTwinWidth())) |best| {
-									const t = self.graph.calculateInducedTwwPotential(best.erased,best.survivor,&selection.potential, seq.getTwinWidth());
-									if(t.isLess(selection.potential,seq.getTwinWidth())) {
-										min_contraction = best;
-										used_min_hash_move = true;
-									}
-								}
+                var used_min_hash_move: bool = false;
+                if (try self.graph.min_hash.getBestMove(self.graph, seq.getTwinWidth())) |best| {
+                    const t = self.graph.calculateInducedTwwPotential(best.erased, best.survivor, &selection.potential, seq.getTwinWidth());
+                    if (t.isLess(selection.potential, seq.getTwinWidth())) {
+                        min_contraction = best;
+                        used_min_hash_move = true;
+                    }
+                }
 
                 current_postpones = 0;
                 best_contraction_potential_postponed.reset();
@@ -1025,7 +1024,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                             // If the node seems egligable for merges update distance metrics and try again to merge
                             if (follow_up_moves > 5) {
                                 solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-                                next_selection = try self.selectBestMove(K, P, first_node, solver, total_tww,seed);
+                                next_selection = try self.selectBestMove(K, P, first_node, solver, total_tww, seed);
                                 follow_up_moves = 0;
                             } else {
                                 // otherwise break
@@ -1059,7 +1058,7 @@ pub fn InducedSubGraph(comptime T: type) type {
                         }
                     }
 
-										std.debug.print("Total tww {}\n",.{total_tww});
+                    std.debug.print("Total tww {}\n", .{total_tww});
                     return total_tww;
                 }
             }
@@ -1071,8 +1070,8 @@ pub fn InducedSubGraph(comptime T: type) type {
 
             // Do an exhaustive search for the best contraction sequence
             while (contractions_left > 0) {
-                var move = Self.selectBestMoveExhaustive(bounded_array.buffer[0..bounded_array.len], total_tww,self.graph);
-								_ = bounded_array.pop();
+                var move = Self.selectBestMoveExhaustive(bounded_array.buffer[0..bounded_array.len], total_tww, self.graph);
+                _ = bounded_array.pop();
 
                 total_tww = std.math.max(try self.graph.addContractionNoMinHash(move.erased, move.survivor, seq), total_tww);
                 contractions_left -= 1;
@@ -1088,13 +1087,12 @@ pub fn InducedSubGraph(comptime T: type) type {
                             first_left_node = bounded_array.pop();
                         }
                     }
-										std.debug.print("Total tww {}\n",.{total_tww});
+                    std.debug.print("Total tww {}\n", .{total_tww});
 
                     return total_tww;
                 }
                 //std.debug.print("Contractions left {} and tww {}\n",.{contractions_left,seq.getTwinWidth()});
             }
-
 
             return total_tww;
         }

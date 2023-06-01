@@ -991,40 +991,40 @@ pub fn Graph(comptime T: type) type {
             var solver = try solver_resources.SolverResources(T, K, P).init(self);
             defer solver.deinit(self.allocator);
 
-						var time = try std.time.Instant.now();
+            var time = try std.time.Instant.now();
 
-						var seed:u64 = 19;
+            var seed: u64 = 19;
 
             self.contraction.reset();
             while (self.connected_components_min_heap.removeOrNull()) |cc| {
                 // Only for small exact graphs
 
                 var cc_inst = &self.connected_components.items[cc.index];
-								try cc_inst.resetGraph();
+                try cc_inst.resetGraph();
 
                 if (T == u8 and cc_inst.subgraph.nodes.len < 128) {
-                    var cc_tww = try cc_inst.solveGreedy(K, P, &solver,seed);
+                    var cc_tww = try cc_inst.solveGreedy(K, P, &solver, seed);
                     cc_inst.tww = cc_tww;
                 } else {
-                    var cc_tww = try cc_inst.solveGreedyTopK(K, P, &solver,seed);
+                    var cc_tww = try cc_inst.solveGreedyTopK(K, P, &solver, seed);
                     cc_inst.tww = cc_tww;
                 }
-								seed += 1009;
-								try self.connected_components_min_heap.add(connected_components.ConnectedComponentIndex(T) {
-									.index = cc.index,
-									.tww = cc_inst.tww,
-								});
+                seed += 1009;
+                try self.connected_components_min_heap.add(connected_components.ConnectedComponentIndex(T){
+                    .index = cc.index,
+                    .tww = cc_inst.tww,
+                });
 
-								if(timeout_seconds) |ts| {
-									const now = try std.time.Instant.now();
-									if(now.since(time) > 1000_000_000*ts) {
-										break;
-									}
-								}
+                if (timeout_seconds) |ts| {
+                    const now = try std.time.Instant.now();
+                    if (now.since(time) > 1000_000_000 * ts) {
+                        break;
+                    }
+                }
             }
 
-						const index = self.connected_components_min_heap.peek().?;
-						const tww = self.connected_components.items[index.index].tww;
+            const index = self.connected_components_min_heap.peek().?;
+            const tww = self.connected_components.items[index.index].tww;
 
             try self.combineContractionSequences();
 

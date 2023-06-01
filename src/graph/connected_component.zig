@@ -278,7 +278,7 @@ pub fn ConnectedComponent(comptime T: type) type {
             }
             var slice: []u32 = try allocator.alloc(u32, num_entries);
             var backup_slice: []u32 = try allocator.alloc(u32, num_entries);
-            if (nodes.len > 2) {
+            if (nodes.len >= 2) {
                 var j: usize = 0;
                 for (0..(nodes.len - 1)) |i| {
                     slice[j] = @as(u32, nodes[i + 1]);

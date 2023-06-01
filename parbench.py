@@ -136,5 +136,6 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--num_threads", type=int, default=4, help="Number of threads (default: 4)")
     parser.add_argument("-k", "--kill_buffer", type=int, default=5, help="Kill buffer in seconds (default: 5)")
     parser.add_argument("--verify", action="store_true", default=False, help="Verify only, no binary execution")
+    parser.add_argument("--binary", type=str, default=False, required=True, help="Binary path of solver")
     args = parser.parse_args()
     main(args)

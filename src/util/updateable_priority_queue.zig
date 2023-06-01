@@ -27,7 +27,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
     return struct {
         const Self = @This();
         const KEY_NOT_FOUND = @as(T, std.math.maxInt(T));
-        id_to_heap_pos: []T,
+        id_to_heap_pos: std.AutoHashMapUnmanaged(u64,u64),
         heap: []UpdateablePriorityQueueNode(T, P),
         len: usize,
         allocator: Allocator,
@@ -36,7 +36,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
         /// Initialize and return a priority queue.
         pub fn init(allocator: Allocator, context: Context) Self {
             return Self {
-                .id_to_heap_pos = &[_]T{},
+                .id_to_heap_pos = std.AutoHashMapUnmanaged(u64,u64){},
                 .heap = &[_]UpdateablePriorityQueueNode(T, P){},
                 .len = 0,
                 .allocator = allocator,
@@ -73,18 +73,20 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
         }
 
         pub fn removeKey(self: *Self, key: T) ?UpdateablePriorityQueueNode(T,P) {
-            if ((self.empty()) or (self.key >= self.id_to_heap_pos.len) or (self.id_to_heap_pos[key]==KEY_NOT_FOUND)) {
-                return null;
-            } else {
-                return self.removeAtHeapIdx(self.id_to_heap_pos[key]);
-            }
+						if (self.id_to_heap_pos.get(key)) |pos| {
+							return self.removeAtHeapIdx(pos);
+						}
+						return null;
         }
 
         fn removeAtHeapIdx(self: *Self, index: T) UpdateablePriorityQueueNode(T,P) {
             const last = self.heap[self.len - 1];
             const item = self.heap[index];
-            self.id_to_heap_pos[item.key] = KEY_NOT_FOUND;
-            self.id_to_heap_pos[last.key] = 0;
+						_ = self.id_to_heap_pos.remove(item.key);
+
+						if(self.id_to_heap_pos.getPtr(last.key)) |ptr| {
+							ptr.* = 0;
+						}
 
             self.heap[index] = last;
             self.len -= 1;
@@ -103,29 +105,8 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
             return item;
         }
 
-
-        fn extend_ids(self: *Self, new_max_key: T) !bool {
-            const new_capacity = new_max_key+1;
-            var old_capacity = self.id_to_heap_pos.len;
-            var better_capacity = self.id_to_heap_pos.len;
-            if (better_capacity >= new_capacity) {
-                return false;
-            }
-            while (true) {
-                better_capacity += better_capacity / 2 + 8;
-                if (better_capacity >= new_capacity) break;
-            }
-            self.id_to_heap_pos = try self.allocator.realloc(self.id_to_heap_pos, better_capacity);
-            const N = self.id_to_heap_pos.len;
-            for (old_capacity..N) |i| { // set all new indices to a null value
-                self.id_to_heap_pos[i] = KEY_NOT_FOUND;
-            }
-            return true;
-        }
-
         pub fn updateOrInsert(self: *Self, key: T, priority: P) !bool {
-            const did_extend = try self.extend_ids(key);
-            if (did_extend or (self.id_to_heap_pos[key] == KEY_NOT_FOUND)) { // new key
+            if (!self.id_to_heap_pos.contains(key)) { // new key
                 try self.ensureUnusedCapacity(1);
                 self.addUnchecked(key, priority);
             } else { // old key, just update
@@ -143,14 +124,14 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
             const node = UpdateablePriorityQueueNode(T, P).init(key, priority);
             self.heap[self.len] = node;
             const idx = @intCast(u32, self.len);
-            self.id_to_heap_pos[key]=idx;
+            self.id_to_heap_pos.put(self.allocator,key,idx) catch @panic("Out of memory");
             siftUp(self, idx);
             self.len += 1;
         }
 
         fn update(self: *Self, key: T, priority: P) !void {
-            const idx = self.id_to_heap_pos[key];
-            const old_priority = self.heap[self.id_to_heap_pos[key]].priority;
+            const idx = self.id_to_heap_pos.get(key).?;
+            const old_priority = self.heap[idx].priority;
             switch (compareFn(self.context, priority, old_priority)) {
                 .lt => siftUp(self, idx),
                 .gt => siftDown(self, idx),
@@ -158,7 +139,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
             }
         }
 
-        fn siftUp(self: *Self, start_index: u32) void {
+        fn siftUp(self: *Self, start_index: u64) void {
             var child_index = start_index;
             while (child_index > 0) {
                 var parent_index = ((child_index - 1) >> 1);
@@ -173,14 +154,14 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
                 self.heap[parent_index] = child;
                 self.heap[child_index] = parent;
 
-                self.id_to_heap_pos[child_key] = parent_index;
-                self.id_to_heap_pos[parent_key] = child_index;
+                self.id_to_heap_pos.getPtr(child_key).?.* = parent_index;
+                self.id_to_heap_pos.getPtr(parent_key).?.* = child_index;
                 
                 child_index = parent_index;
             }
         }
         
-        fn siftDown(self: *Self, start_index: u32) void {
+        fn siftDown(self: *Self, start_index: u64) void {
             var index = start_index;
             const half = self.len >> 1;
             while (true) {
@@ -213,8 +194,8 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
                 self.heap[smallest_index] = self.heap[index];
                 self.heap[index] = smallest;
 
-                self.id_to_heap_pos[smallest_key] = index;
-                self.id_to_heap_pos[key] = smallest_index;
+                self.id_to_heap_pos.getPtr(smallest_key).?.* = index;
+                self.id_to_heap_pos.getPtr(key).?.* = smallest_index;
 
                 index = smallest_index;
 
@@ -224,24 +205,19 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
 
 
         pub fn getPriority(self: *Self, key: T) ?P {
-            if ((self.id_to_heap_pos.len >= key) or (self.id_to_heap_pos[key] == KEY_NOT_FOUND)) {
-                return null;
-            } else {
-                const idx = self.id_to_heap_pos[key];
+            if (self.id_to_heap_pos.get(key)) |idx| {
                 return self.heap[idx].priority;
+            } else {
+                return null;
             }
         }
 
         /// Free memory used by the queue.
         pub fn deinit(self: Self) void {
             self.allocator.free(self.heap);
-            self.allocator.free(self.id_to_heap_pos);
+						self.id_to_heap_pos.deinit(self.allocator);
         }
 
-        pub fn ensureMaxKey(self: *Self, max_key: T) !void {
-            _ = try self.extend_ids(max_key);
-        }
-        
 
         /// Ensure that the queue can fit at least `new_capacity` items.
         pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) !void {

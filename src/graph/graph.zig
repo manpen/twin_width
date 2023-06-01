@@ -72,7 +72,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 5),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 3),
 
         // Usually the exact tries to find a solution that is strictly better than
         // the heuristic one (oftentimes only proving a lower bound). If set to true,
@@ -174,28 +174,28 @@ pub fn Graph(comptime T: type) type {
                     switch (red_edge.edge_type) {
                         .black_to_red_own => {
                             // Remove red edge
-                            _ = try self.node_list[last.survivor].red_edges.remove(self.allocator, red_edge.target);
-                            _ = try self.node_list[red_edge.target].red_edges.remove(self.allocator, last.survivor);
+                            _ = try self.node_list[last.survivor].removeRedEdge(self.allocator, red_edge.target);
+                            _ = try self.node_list[red_edge.target].removeRedEdge(self.allocator, last.survivor);
 
                             // Readd black edge
-                            try self.node_list[last.survivor].black_edges.add(self.allocator, red_edge.target);
-                            try self.node_list[red_edge.target].black_edges.add(self.allocator, last.survivor);
+                            try self.node_list[last.survivor].addBlackEdge(self.allocator, red_edge.target);
+                            try self.node_list[red_edge.target].addBlackEdge(self.allocator, last.survivor);
                         },
                         .black_to_red_other => {
                             // Remove red edge
-                            _ = try self.node_list[last.survivor].red_edges.remove(self.allocator, red_edge.target);
+                            _ = try self.node_list[last.survivor].removeRedEdge(self.allocator, red_edge.target);
 
-                            _ = try self.node_list[red_edge.target].red_edges.remove(self.allocator, last.survivor);
+                            _ = try self.node_list[red_edge.target].removeRedEdge(self.allocator, last.survivor);
                         },
                         .black_to_deleted => {
-                            try self.node_list[last.survivor].black_edges.add(self.allocator, red_edge.target);
+                            try self.node_list[last.survivor].addBlackEdge(self.allocator, red_edge.target);
 
-                            try self.node_list[red_edge.target].black_edges.add(self.allocator, last.survivor);
+                            try self.node_list[red_edge.target].addBlackEdge(self.allocator, last.survivor);
                         },
                         .red_to_deleted => {
-                            try self.node_list[last.survivor].red_edges.add(self.allocator, red_edge.target);
+                            try self.node_list[last.survivor].addRedEdge(self.allocator, red_edge.target);
 
-                            try self.node_list[red_edge.target].red_edges.add(self.allocator, last.survivor);
+                            try self.node_list[red_edge.target].addRedEdge(self.allocator, last.survivor);
                         },
                     }
                 }
@@ -467,7 +467,7 @@ pub fn Graph(comptime T: type) type {
 
             var new_red_edges: i32 = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
-            var before_red_card = self.node_list[survivor].red_edges.cardinality();
+						var correction_factor:T = 0;
 
             // Intuition is as following:
             // New red edges to nodes with a lot of red edges should decrease
@@ -475,6 +475,8 @@ pub fn Graph(comptime T: type) type {
 
             while (red_iter.next()) |item| {
                 if (item == survivor) {
+										correction_factor = 1;
+                    new_red_edges -= 1;
                     continue;
                 }
 
@@ -482,12 +484,12 @@ pub fn Graph(comptime T: type) type {
                     delta_red += 1;
                 } else {
                     // We destroyed a red edge update potential
-                    red_potential -= (@intCast(i64, self.node_list[item].red_edges.cardinality()) * @intCast(i64, self.node_list[item].red_edges.cardinality()));
+                    red_potential -= @intCast(i64, self.node_list[item].red_edges.cardinality());
                     new_red_edges -= 1;
                 }
             }
 
-            delta_red += self.node_list[survivor].red_edges.cardinality();
+            delta_red += self.node_list[survivor].red_edges.cardinality() - correction_factor;
 
             var tww: T = 0;
             var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
@@ -501,7 +503,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[survivor].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                        red_potential += (@intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)) * @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)));
+                        red_potential += @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -510,7 +512,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[erased].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                        red_potential += (@intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)) * @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)));
+                        red_potential += @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -518,17 +520,6 @@ pub fn Graph(comptime T: type) type {
                 const current = InducedTwinWidthPotential{ .tww = tww, .cumulative_red_edges = red_potential, .delta_red_edges = std.math.maxInt(i32) };
                 if (!current.isLess(ub.*, current_tww)) {
                     return current;
-                }
-            }
-
-            if (before_red_card < delta_red) {
-                // replace by small gaussian
-                for (before_red_card + 1..delta_red + 1) |c| {
-                    red_potential += (@intCast(i64, c * c));
-                }
-            } else {
-                for (delta_red + 1..before_red_card + 1) |c| {
-                    red_potential -= (@intCast(i64, c * c));
                 }
             }
 
@@ -1006,7 +997,7 @@ pub fn Graph(comptime T: type) type {
 
             self.contraction.reset();
             while (self.connected_components_min_heap.removeOrNull()) |cc| {
-								if(solving_options.single_pass and self.connected_components.items[cc.index].tww != self.connected_components.items[cc.index].subgraph.nodes.len-1) {
+								if(solving_options.single_pass and self.connected_components.items[cc.index].iteration >= 2) {
 									try self.connected_components_min_heap.add(cc);
 									break;
 								}
@@ -1130,7 +1121,7 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 5).init(graph_instance.allocator, 72, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 3).init(graph_instance.allocator, 18, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
             return graph_instance;
         }
@@ -1166,7 +1157,7 @@ pub fn Graph(comptime T: type) type {
                     }
                 } else {
                     non_trivial_components += 1;
-                    try self.connected_components.append(self.allocator, try connected_components.ConnectedComponent(T).init(self.allocator, tmp, iterator.level, self));
+                    try self.connected_components.append(self.allocator, try connected_components.ConnectedComponent(T).init(self.allocator, tmp, self));
                 }
                 current_slice_start = current_slice_ptr;
             }

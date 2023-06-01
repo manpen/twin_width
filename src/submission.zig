@@ -12,15 +12,15 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
     defer pace_inst.deinit(allocator);
     var loaded_graph = graph.Graph(T).loadFromPace(allocator, &pace_inst) catch |err| {
         //Print error message if the graph could not be loaded
-        std.debug.print("Could not load graph: {}", .{err});
+				// Spin lock
+				while(heuristic) {}
         return err;
     };
     defer loaded_graph.deinit();
 
     signal_handler.initialize_signal_handler(try loaded_graph.findAllConnectedComponents());
-    std.debug.print("Initialized signal handler. the pid is: {d}\n", .{std.os.linux.getpid()});
     _ = loaded_graph.solveGreedy(.{.single_pass = false}) catch |err| {
-        std.debug.print("Error {}\n", .{err});
+				while(heuristic) {}
         return err;
     };
     //std.debug.print("Finished solving, entering infinite loop and waiting for SIGTERM.\n", .{});
@@ -44,7 +44,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     var allocator = gpa.allocator();
 
-    var large_buffer = try allocator.alloc(u8, 1024 * 1024 * 3000);
+    var large_buffer = try allocator.alloc(u8, 1024 * 1024 * 7500);
     var fixed_buf = std.heap.FixedBufferAllocator.init(large_buffer);
     var hpa = fixed_buf.allocator();
 

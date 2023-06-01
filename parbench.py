@@ -46,11 +46,11 @@ def run_binary_with_files(input_dir, binary_path, output_dir, timeout, num_threa
         # Loop until all files are processed and no active processes remain
         while file_stack or processes:
             # Check if any processes have terminated
-            for i, (process, start_time, sigterm_flag) in enumerate(processes):
+            for i, (process, graph_file_path, start_time, sigterm_flag) in enumerate(processes):
                 if process.poll() is not None:
                     end_time = time.time()
                     runtime = end_time - start_time
-                    writer.writerow([os.path.basename(file_path), runtime])
+                    writer.writerow([os.path.basename(graph_file_path), runtime])
                     processes.pop(i)
                     processed_files += 1
                     print(f"Process terminated with runtime: {runtime:.2f} seconds")
@@ -68,18 +68,18 @@ def run_binary_with_files(input_dir, binary_path, output_dir, timeout, num_threa
                     process_start_time = time.time()
                     process = subprocess.Popen(cmd, stdin=input_file, stdout=stdout_file, stderr=stderr_file,
                                                preexec_fn=os.setsid)
-                    processes.append((process, process_start_time, False))
+                    processes.append((process, file_path, process_start_time, False))
 
             # Check timeout and terminate or kill processes
             for i in range(len(processes)):
-                process, start_time, sigterm_flag = processes[i]
+                process, graph_file_path, start_time, sigterm_flag = processes[i]
                 elapsed_time = time.time() - start_time
                 if elapsed_time > timeout:
                     if sigterm_flag and elapsed_time > timeout + kill_buffer:
                         process.kill()
                     elif not sigterm_flag:
                         process.terminate()
-                        processes[i] = (process, start_time, True)
+                        processes[i] = (process, graph_file_path, start_time, True)
 
             # Sleep for a second before checking process status again
             time.sleep(1)

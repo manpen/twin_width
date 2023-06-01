@@ -1,6 +1,6 @@
 # Twin Width Solver
 
-This repository contains exact and heuristic twin width solver that were developed for the [PACE 2023](https://pacechallenge.org/2023/) challenge.
+This repository contains exact and heuristic twin width solvers that were developed for the [PACE 2023](https://pacechallenge.org/2023/) challenge.
 
 The solvers are implemented in the Zig programming language. Since this language (and its standard library) are still rapidly evolving, we highly recommend to compile the code with Zig version `0.11.0-dev.3045`:
 
@@ -9,8 +9,9 @@ The solvers are implemented in the Zig programming language. Since this language
 
 The only explicit dependency is the Zig compiler.
 After the installation of the compiler ---([essentially unpacking of the packages linked before](https://ziglang.org/learn/getting-started/#installing-zig))--- run the following command to build the solvers and expect a build time of roughly a minute.
+
 ```
-zig build run -Doptimize=ReleaseFast
+zig build run -Doptimize=ReleaseFast -Dcpu=native
 ```
 
 If everything works fine (if not please check the installed Zig version!) the binaries are generated in the directory `zig-out/bin`.
@@ -20,3 +21,5 @@ They use the same semantics as on the [optil.io platform](https://www.optil.io/o
 - The solution is emitted via STDOUT
 - Additional information are printed via STDERR
 - If the program panics (non-zero return code), the output shall be disregarded
+- The exact solver terminates once optimality of the solution was established
+- The heuristic solver keeps running until it receives a SIGTERM and then dumps the best solution found

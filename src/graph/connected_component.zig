@@ -127,9 +127,9 @@ pub fn ConnectedComponent(comptime T: type) type {
                     }
                 }
             }
-						
-						const time = try std.time.Instant.now();
-						std.debug.print("Finished iteration with tww {} and time {}ms\n",.{self.tww, time.since(self.subgraph.graph.started_at)/(1000*1000)});
+
+            const time = try std.time.Instant.now();
+            std.debug.print("Finished iteration with tww {} and time {}ms\n", .{ self.tww, time.since(self.subgraph.graph.started_at) / (1000 * 1000) });
 
             self.iteration += 1;
             return result;

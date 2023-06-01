@@ -25,6 +25,7 @@ const GraphScorerMinor = @import("../scorer/graph_scorer.zig").GraphScorerMinor;
 const GraphScorerMinBlacks = @import("../scorer/graph_scorer.zig").GraphScorerMinBlack;
 const graph_scorers = @import("../scorer/graph_scorer.zig");
 const node_scorers = @import("../scorer/node_scorer.zig");
+const signal_slice = @import("../util/signal_handler.zig");
 
 pub fn ConnectedComponentIndex(comptime T: type) type {
     comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -55,6 +56,7 @@ pub fn ConnectedComponent(comptime T: type) type {
         iteration: u32,
         contraction_slice: []u32,
         backup_contraction_slice: []u32,
+        own_slice_index: u32,
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             allocator.free(self.backup_contraction_slice);
@@ -87,6 +89,7 @@ pub fn ConnectedComponent(comptime T: type) type {
             // If this is a problem, we should use a mutex. should add negligible overhead
             var tmp = self.contraction_slice;
             self.contraction_slice = self.backup_contraction_slice;
+            signal_slice.cc_slice[self.own_slice_index] = self.contraction_slice;
             self.backup_contraction_slice = tmp;
             try self.best_contraction_sequence.copyInto(&self.current_contraction_seq.seq);
         }
@@ -105,7 +108,6 @@ pub fn ConnectedComponent(comptime T: type) type {
                     solver.reset();
                     const sweeping = try self.solveSweepingTopK(K, P, solver, false, seed);
                     result = std.math.min(sweeping, result);
-                    try self.resetGraph();
                 } else if (self.tww < 500) {
                     try self.resetGraph();
                     solver.reset();
@@ -297,6 +299,7 @@ pub fn ConnectedComponent(comptime T: type) type {
                 .current_contraction_seq = retraceable,
                 .contraction_slice = slice,
                 .backup_contraction_slice = backup_slice,
+                .own_slice_index = undefined,
             };
         }
     };

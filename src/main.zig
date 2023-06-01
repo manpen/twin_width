@@ -2,6 +2,7 @@ const std = @import("std");
 const graph = @import("graph/graph.zig");
 const bitset = @import("util/two_level_bitset.zig");
 const pace = @import("pace_2023/pace_fmt.zig");
+const signal_handler = @import("util/signal_handler.zig");
 comptime {
     _ = @import("graph/graph.zig");
 }
@@ -38,26 +39,22 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
     // 138 OOM
     var timer = try std.time.Instant.now();
     var pace_part = pace.Pace2023Fmt(T).fromFile(allocator, filename) catch |err| {
-        std.debug.print("Error load from file {}\n", .{err});
         return err;
     };
     var loaded_graph = graph.Graph(T).loadFromPace(allocator, &pace_part) catch |err| {
         //Print error message if the graph could not be loaded std.debug.print("Could not load graph: {}", .{err});
-        std.debug.print("Error load graph {}\n", .{err});
         return err;
     };
     defer loaded_graph.deinit();
 
-    _ = try loaded_graph.findAllConnectedComponents();
+    signal_handler.initialize_signal_handler(try loaded_graph.findAllConnectedComponents());
     const tww = loaded_graph.solveGreedy(.{ .single_pass = true }) catch |err| {
-        std.debug.print("Error {}\n", .{err});
         return err;
     };
 
     const formatted = try std.fmt.allocPrint(loaded_graph.allocator, "{s}.solution", .{filename});
     defer loaded_graph.allocator.free(formatted);
     try loaded_graph.contraction.writeSolution(formatted);
-    std.debug.print("Wrote solution to {s}\n", .{formatted});
 
     //TODO: Check these instances again
     //REALLY SLOW: heuristic_122.gr better but still ~550 sec heuristic_136.gr slow too.

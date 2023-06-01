@@ -219,29 +219,7 @@ pub fn MinHashBand(comptime B: u32) type {
             try second_collisions_map.ensureTotalCapacity(self.allocator, self.collisions.count());
             var iterator = self.collisions.iterator();
             while (iterator.next()) |item| {
-                if (second_collisions_map.getPtr(item.key_ptr.*[0..(B - self.downgraded_level)])) |hits| {
-                    var iter_inner = item.value_ptr.iterator();
-                    while (iter_inner.next()) |inner_item| {
-                        try hits.put(self.allocator, inner_item.key_ptr.*, {});
-                    }
-
-                    var hits_iter_outer = hits.iterator();
-                    while (hits_iter_outer.next()) |inner_item| {
-                        var hits_iter_inner = hits.iterator();
-                        while (hits_iter_inner.next()) |inner_item_second| {
-                            if (inner_item.key_ptr.* == inner_item_second.key_ptr.*) continue;
-                            const unique_key = MinHashSimilarity(u32, B).calculateUniqueKey(inner_item.key_ptr.*, inner_item_second.key_ptr.*);
-                            if (hit_map.getPtr(unique_key)) |v| {
-                                v.* += 1;
-                            } else {
-                                try hit_map.put(self.allocator, unique_key, 1);
-                            }
-                        }
-                    }
-
-                    item.value_ptr.deinit(self.allocator);
-                } else {
-                    try second_collisions_map.put(self.allocator, item.key_ptr.*[0..(B - self.downgraded_level)], item.value_ptr.*);
+                {
                     var hits_iter_outer = item.value_ptr.iterator();
                     while (hits_iter_outer.next()) |inner_item| {
                         var hits_iter_inner = item.value_ptr.iterator();
@@ -255,6 +233,30 @@ pub fn MinHashBand(comptime B: u32) type {
                             }
                         }
                     }
+                }
+                if (second_collisions_map.getPtr(item.key_ptr.*[0..(B - self.downgraded_level)])) |hits| {
+                    var hits_iter_outer = hits.iterator();
+                    while (hits_iter_outer.next()) |inner_item| {
+                        var hits_iter_inner = item.value_ptr.iterator();
+                        while (hits_iter_inner.next()) |inner_item_second| {
+                            if (inner_item.key_ptr.* == inner_item_second.key_ptr.*) continue;
+                            const unique_key = MinHashSimilarity(u32, B).calculateUniqueKey(inner_item.key_ptr.*, inner_item_second.key_ptr.*);
+                            if (hit_map.getPtr(unique_key)) |v| {
+                                v.* += 1;
+                            } else {
+                                try hit_map.put(self.allocator, unique_key, 1);
+                            }
+                        }
+                    }
+
+                    var iter_inner = item.value_ptr.iterator();
+                    while (iter_inner.next()) |inner_item| {
+                        try hits.put(self.allocator, inner_item.key_ptr.*, {});
+                    }
+
+                    item.value_ptr.deinit(self.allocator);
+                } else {
+                    try second_collisions_map.put(self.allocator, item.key_ptr.*[0..(B - self.downgraded_level)], item.value_ptr.*);
                 }
             }
             self.collisions.deinit(self.allocator);
@@ -572,8 +574,11 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
             self.canidate_list.clearRetainingCapacity();
 
-            if (self.sim_pq.len < self.canidate_count * 2) {
+            if (self.sim_pq.len < self.canidate_count * 10) {
                 self.hit_map.clearRetainingCapacity();
+                // Clear queue
+                while (self.sim_pq.removeOrNull()) |_| {}
+
                 for (0..self.bands.len) |index| {
                     try self.bands[index].downgradeBand(&self.hit_map);
                 }

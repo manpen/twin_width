@@ -719,99 +719,6 @@ pub fn InducedSubGraph(comptime T: type) type {
             }
         };
 
-        pub fn solveFoldingSingleNode(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
-            var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
-            if (contractions_left == 0) return 0;
-
-            var generator = std.rand.DefaultPrng.init(23);
-            min_hash.fisher_yates_shuffle(T, self.nodes[0..self.nodes.len], &generator);
-
-            var min_node: T = 0;
-            var min_tww: T = std.math.maxInt(T);
-
-            for (0..std.math.min(self.nodes.len, 1000)) |i| {
-                const item = self.nodes[i];
-
-                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-
-                // Select greedy
-                var selection = try self.selectBestMove(K, P, item, solver, 0);
-                if (selection.potential.tww < min_tww) {
-                    min_node = item;
-                    min_tww = selection.potential.tww;
-                }
-            }
-
-            while (contractions_left > 0) {
-                solver.scorer.unsetVisitedBitset(&solver.scratch_bitset);
-
-                // Select greedy
-                var selection = try self.selectBestMove(K, P, min_node, solver, 0);
-                _ = try self.graph.addContraction(selection.target, min_node, seq);
-                contractions_left -= 1;
-                std.debug.print("Folding contractions left {} tww {}\n", .{ contractions_left, seq.getTwinWidth() });
-            }
-
-            return seq.getTwinWidth();
-        }
-
-        pub fn solveMinHash(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P)) !T {
-            solver.scratch_bitset.unsetAll();
-            var contractions_left: u32 = @intCast(u32, self.nodes.len - 1);
-            var diff_nodes = std.AutoHashMap(u32, u32).init(self.graph.allocator);
-            //try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
-
-            if (contractions_left == 0) return 0;
-            var min_contraction = contraction.Contraction(T){ .erased = 0, .survivor = 0 };
-            while (contractions_left > 0) {
-                //try self.graph.min_hash.fetchNextMoves(120,self.graph);
-
-                var potential = Graph(T).InducedTwinWidthPotential.default();
-
-                var min_mv: u32 = std.math.maxInt(u32);
-                var max_mv: u32 = 0;
-                diff_nodes.clearRetainingCapacity();
-                var def = Graph(T).InducedTwinWidthPotential.default();
-
-                var moves = try std.BoundedArray(min_hash.MinHashEntry, 10_000).init(0);
-                try self.graph.min_hash.getNextKMoves(10_000, &moves, self.graph);
-                var direct_score: T = std.math.maxInt(T);
-                for (0..moves.len) |mv_index| {
-                    const mv = moves.buffer[mv_index];
-
-                    const move = mv.intoMove(T, self.graph.number_of_nodes);
-                    var global_score = self.graph.calculateInducedTwwPotential(move.erased, move.survivor, &def, seq.getTwinWidth());
-                    var direct_score_mv = self.graph.calculateTwwOfMergeSurvivor(move.erased, move.survivor);
-                    if (diff_nodes.getPtr(move.erased)) |er| {
-                        er.* += 1;
-                        max_mv = std.math.max(max_mv, er.*);
-                    } else {
-                        try diff_nodes.put(move.erased, 1);
-                    }
-                    if (diff_nodes.getPtr(move.survivor)) |sr| {
-                        sr.* += 1;
-                        max_mv = std.math.max(max_mv, sr.*);
-                    } else {
-                        try diff_nodes.put(move.survivor, 1);
-                    }
-                    min_mv = std.math.min(min_mv, global_score.tww);
-                    if (direct_score_mv < direct_score) {
-                        min_contraction = move;
-                        potential = global_score;
-                        direct_score = direct_score_mv;
-                    }
-                }
-
-                _ = self.graph.addContraction(min_contraction.erased, min_contraction.survivor, seq) catch |err| {
-                    std.debug.print("Contractions left {} tww {}\n", .{ contractions_left, seq.getTwinWidth() });
-                    return err;
-                };
-                try self.graph.min_hash.reinsertKMoves(10_000, &moves, self.graph);
-                contractions_left -= 1;
-            }
-            return seq.getTwinWidth();
-        }
-
         pub fn solveSweepingSolverTopKPrecision(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), iteration: u32, seed: u64) !T {
             //try self.graph.min_hash.bootstrapNodes(self.nodes,self.graph);
             solver.scratch_bitset.unsetAll();
@@ -1029,39 +936,6 @@ pub fn InducedSubGraph(comptime T: type) type {
             }
         };
 
-        pub fn refineContractionSequence(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), seed: u64) !T {
-            var pq_move = std.PriorityQueue(MadeMove, void, MadeMove.compare).init(self.graph.allocator, {});
-
-            var backtrack_moves: u32 = @intCast(u32, self.nodes.len - 1);
-
-            while (true) {
-                pq_move.len = 0;
-                var added_factor: T = @intCast(T, self.nodes.len - 1);
-                var upper_bound: T = seq.getTwinWidth();
-                var ths: u32 = 0;
-                while (ths < backtrack_moves) {
-                    if (seq.lastContraction()) |ct| {
-                        try pq_move.add(MadeMove{ .contraction = ct, .tww = self.graph.calculateTwwOfMergeSurvivor(ct.erased, ct.survivor) + added_factor });
-                    }
-
-                    ths += 1;
-                    try self.graph.revertLastContraction(seq);
-                    added_factor -= 1;
-                }
-
-                backtrack_moves -= 1;
-
-                std.debug.print("Twin width backtracked {} remaining nodes {}\n", .{ seq.getTwinWidth(), self.nodes.len - seq.write_ptr });
-                if (pq_move.removeOrNull()) |mv| {
-                    _ = try self.graph.addContractionNoMinHash(mv.contraction.erased, mv.contraction.survivor, seq);
-                    std.debug.print("Twin width {}\n", .{seq.getTwinWidth()});
-                    const tww = try self.solveGreedyTopK(K, P, seq, solver, false, seed + mv.contraction.erased, upper_bound);
-                    std.debug.print("new twin width {}\n", .{tww});
-                }
-            }
-            return seq.getTwinWidth();
-        }
-
         pub fn solveGreedyTopKMinHash(self: *Self, comptime K: u32, comptime P: u32, seq: *retraceable_contraction.RetraceableContractionSequence(T), solver: *solver_resources.SolverResources(T, K, P), iteration: u32, seed: u64, upper_bound: u32) !T {
             _ = upper_bound;
             // Use once at the beginning later we will only consider merges which involve the survivor of the last merge
@@ -1071,7 +945,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();
 
-            self.graph.min_hash.canidate_count = 50 * iteration;
+            self.graph.min_hash.canidate_count = 40 * iteration;
             try self.graph.min_hash.bootstrapNodes(self.nodes, self.graph, seed, &solver.scratch_bitset, &solver.bfs_stack);
 
             // Sadly only small components can be split of while removing only one articulation point
@@ -1096,7 +970,6 @@ pub fn InducedSubGraph(comptime T: type) type {
                 // Promote to large degree node
                 if (self.graph.node_list[item].cardinality() > 10000 and !self.graph.node_list[item].isLargeNode()) {
                     try self.graph.node_list[item].promoteToLargeDegreeNode(self.graph);
-                    //std.debug.print("Promoted degree {} to large node.\n",.{self.graph.node_list[item].cardinality()});
                     node_counter += 1;
                 }
                 try solver.priority_queue.add(item);
@@ -1241,7 +1114,6 @@ pub fn InducedSubGraph(comptime T: type) type {
 
                     return total_tww;
                 }
-                //std.debug.print("Contractions left {} and tww {}\n",.{contractions_left,seq.getTwinWidth()});
             }
 
             return total_tww;
@@ -1279,7 +1151,6 @@ pub fn InducedSubGraph(comptime T: type) type {
                 // Promote to large degree node
                 if (self.graph.node_list[item].cardinality() > 10000 and !self.graph.node_list[item].isLargeNode()) {
                     try self.graph.node_list[item].promoteToLargeDegreeNode(self.graph);
-                    //std.debug.print("Promoted degree {} to large node.\n",.{self.graph.node_list[item].cardinality()});
                     node_counter += 1;
                 }
                 try solver.priority_queue.add(item);
@@ -1451,7 +1322,6 @@ pub fn InducedSubGraph(comptime T: type) type {
 
                     return total_tww;
                 }
-                //std.debug.print("Contractions left {} and tww {}\n",.{contractions_left,seq.getTwinWidth()});
             }
 
             return total_tww;

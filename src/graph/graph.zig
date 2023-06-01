@@ -72,7 +72,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 3),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 4),
 
         // Usually the exact tries to find a solution that is strictly better than
         // the heuristic one (oftentimes only proving a lower bound). If set to true,
@@ -659,7 +659,6 @@ pub fn Graph(comptime T: type) type {
 
         pub fn addContractionNoMinHash(self: *Self, erased: T, survivor: T, seq: *RetraceableContractionSequence(T)) !T {
             if (self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
-                std.debug.print("Result {} {}\n", .{ erased, survivor });
                 return GraphError.InvalidContractionOneNodeErased;
             } else if (erased == survivor) {
                 return GraphError.MisformedEdgeList;
@@ -1097,7 +1096,7 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 3).init(graph_instance.allocator, 18, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 12, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
             return graph_instance;
         }
@@ -1142,6 +1141,7 @@ pub fn Graph(comptime T: type) type {
             var cc_solutions = try self.allocator.alloc([]u32, non_trivial_components + 1);
             for (0..non_trivial_components) |i| {
                 cc_solutions[i] = self.connected_components.items[i].contraction_slice;
+                self.connected_components.items[i].own_slice_index = @intCast(u32, i);
             }
             const items = self.trivial_connected_component_contraction_sequence.items;
             const last_index = non_trivial_components;
@@ -1166,7 +1166,6 @@ pub fn Graph(comptime T: type) type {
             }
 
             var tww = self.connected_components_min_heap.remove();
-            //std.debug.print("Found {} components largest {} and tww {} density {}\n", .{ components, largest, tww.tww, self.density() });
             try self.connected_components_min_heap.add(tww);
             return cc_solutions;
         }

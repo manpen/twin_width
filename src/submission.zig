@@ -18,28 +18,19 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
     };
     defer loaded_graph.deinit();
 
-    signal_handler.initialize_signal_handler(try loaded_graph.findAllConnectedComponents());
+    signal_handler.initialize_signal_handler(loaded_graph.findAllConnectedComponents() catch |err| {
+        while (heuristic) {}
+        return err;
+    });
     _ = loaded_graph.solveGreedy(.{ .single_pass = false }) catch |err| {
         while (heuristic) {}
         return err;
     };
-    //std.debug.print("Finished solving, entering infinite loop and waiting for SIGTERM.\n", .{});
-    //try loaded_graph.contraction.writeSolutionToStdout();
     // loop until signal received, dump results via signal handler
     while (heuristic) {}
 }
 
 pub fn main() !void {
-    //simple test for signal handler
-    // var test_data1 = [_]u32{0, 1, 2, 3, 4, 2};
-    // var test_data2 = [_]u32{11, 12, 13, 14, 12, 15, 77, 89, 11, 39};
-    // var multi_dimensional_test_data = [_][]u32{test_data1[0..], test_data2[0..]};
-    // signal_handler.initialize_signal_handler(multi_dimensional_test_data[0..]);
-    // std.debug.print("Starting pid {d}\n\n", .{std.os.linux.getpid()});
-    // while (true) {
-    //     test_data1 = [_]u32{14, 1, 2, 3, 4, 52};
-    // }
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     var allocator = gpa.allocator();

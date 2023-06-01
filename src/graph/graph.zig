@@ -1115,7 +1115,7 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 18, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 12, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
             return graph_instance;
         }

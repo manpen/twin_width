@@ -18,7 +18,10 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
     };
     defer loaded_graph.deinit();
 
-    signal_handler.initialize_signal_handler(try loaded_graph.findAllConnectedComponents());
+    signal_handler.initialize_signal_handler(loaded_graph.findAllConnectedComponents() catch |err| {
+        while (heuristic) {}
+        return err;
+    });
     _ = loaded_graph.solveGreedy(.{ .single_pass = false }) catch |err| {
         while (heuristic) {}
         return err;

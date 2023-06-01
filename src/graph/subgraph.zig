@@ -945,7 +945,7 @@ pub fn InducedSubGraph(comptime T: type) type {
             // Reset bitset we need it to use it as a scratch for the visited field
             solver.scratch_bitset.unsetAll();
 
-            self.graph.min_hash.canidate_count = 50 * iteration;
+            self.graph.min_hash.canidate_count = 40 * iteration;
             try self.graph.min_hash.bootstrapNodes(self.nodes, self.graph, seed, &solver.scratch_bitset, &solver.bfs_stack);
 
             // Sadly only small components can be split of while removing only one articulation point

@@ -88,7 +88,7 @@ def run_binary_with_files(input_dir, binary_path, output_dir, timeout, num_threa
                         processes[i] = (process, start_time, True)
 
             # Sleep for a second before checking process status again
-            time.sleep(1)
+            time.sleep(0.2)
 
     # Print overall process information
     print(f"All processes terminated.")

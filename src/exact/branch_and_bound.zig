@@ -53,13 +53,14 @@ const FeatureUseWFHash: bool = false;
 const FeatureReportProgress: u32 = 0 * 1000_000; // set to 0 to disable
 
 const FeaturePruning: bool = true;
+
 const FeatureInitialPruning: bool = FeaturePruning and true;
 const FeatureLeafNodePruning: bool = FeaturePruning and true;
 const FeatureTwinPruning: bool = FeaturePruning and true;
 const FeatureTinyGraphBelowSlack: bool = FeaturePruning and true; // almost no effect, as it only helps, if we're about to find a solution
-const FeaturePruneTinyRedBridges: bool = FeaturePruning and true;
-const FeaturePruneGeneralizedTwins: bool = FeaturePruning and true;
-const FeaturePruneBlackCCs: bool = FeaturePruning and true;
+const FeaturePruneTinyRedBridges: bool = FeaturePruning and false;
+const FeaturePruneGeneralizedTwins: bool = FeaturePruning and false;
+const FeaturePruneBlackCCs: bool = FeaturePruning and false;
 
 const FeatureComplements: bool = false; // BROKEN
 const FeatureOuterPathPruning: bool = FeaturePruning and true;

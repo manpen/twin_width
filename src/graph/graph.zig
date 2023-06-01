@@ -659,7 +659,6 @@ pub fn Graph(comptime T: type) type {
 
         pub fn addContractionNoMinHash(self: *Self, erased: T, survivor: T, seq: *RetraceableContractionSequence(T)) !T {
             if (self.erased_nodes.get(erased) or self.erased_nodes.get(survivor)) {
-                std.debug.print("Result {} {}\n", .{ erased, survivor });
                 return GraphError.InvalidContractionOneNodeErased;
             } else if (erased == survivor) {
                 return GraphError.MisformedEdgeList;
@@ -1185,7 +1184,6 @@ pub fn Graph(comptime T: type) type {
             }
 
             var tww = self.connected_components_min_heap.remove();
-            //std.debug.print("Found {} components largest {} and tww {} density {}\n", .{ components, largest, tww.tww, self.density() });
             try self.connected_components_min_heap.add(tww);
             return cc_solutions;
         }

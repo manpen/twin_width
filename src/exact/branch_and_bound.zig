@@ -32,16 +32,16 @@ const CandidateListRef = struct {
 
 const INITIAL_CACHE_SIZE_MB: usize = 100;
 
-const FeatureParanoia: bool = false;
+const FeatureParanoia: bool = true;
 
 const FeatureReuseCandidates: bool = true;
-const FeatureParanoidCandidates: bool = FeatureReuseCandidates and false; // additional expensive assertions
+const FeatureParanoidCandidates: bool = FeatureReuseCandidates and true; // additional expensive assertions
 const FeatureSkipProcessed: bool = FeatureReuseCandidates and true;
 
 const FeatureShrinkGraph: bool = true;
 
 const FeatureSkipInfeasibleCandidatesEarly: bool = true;
-const FeatureSkipPathNodes: bool = true;
+const FeatureSkipPathNodes: bool = false;
 const FeatureCriticalCandidates: bool = true; // skips dist>3 pairs with critical black neighbor
 
 const FeaturePessimiticCandidateAllocation: bool = false;
@@ -59,7 +59,7 @@ const FeatureLeafNodePruning: bool = FeaturePruning and true;
 const FeatureTwinPruning: bool = FeaturePruning and true;
 const FeatureTinyGraphBelowSlack: bool = FeaturePruning and true; // almost no effect, as it only helps, if we're about to find a solution
 const FeaturePruneTinyRedBridges: bool = FeaturePruning and false;
-const FeaturePruneGeneralizedTwins: bool = FeaturePruning and false;
+const FeaturePruneGeneralizedTwins: bool = FeaturePruning and true;
 const FeaturePruneBlackCCs: bool = FeaturePruning and false;
 
 const FeatureComplements: bool = false; // BROKEN
@@ -918,7 +918,7 @@ fn Frame(comptime Graph: type) type {
             var iter = self.input_graph.has_neighbors.iter_set();
             while (iter.next()) |u| {
                 if (self.input_graph.deg(u) != 2 or !self.input_graph.constRedNeighbors(u).areAllUnset()) {
-                    self.mergables.assignOr(self.input_graph.constNeighbors(u));
+                    self.mergables.assignOr(self.input_graph.constTwoNeighbors(u));
                     _ = self.mergables.setBit(u);
                 }
             }

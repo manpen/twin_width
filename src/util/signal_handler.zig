@@ -66,3 +66,7 @@ pub fn initialize_signal_handler(init_cc_slice: [][]u32) void {
     cc_slice = init_cc_slice;
     _ = sigaction(SIGTERM, &act, null);
 }
+
+pub fn initialize_signal_handler_slices_only(init_cc_slice: [][]u32) void {
+    cc_slice = init_cc_slice;
+}

@@ -14,7 +14,7 @@ pub fn UpdateablePriorityQueueNode(comptime T: type, comptime P: type) type {
         priority: P,
 
         pub fn init(key: T, priority: P) Self {
-            return Self {
+            return Self{
                 .key = key,
                 .priority = priority,
             };
@@ -27,7 +27,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
     return struct {
         const Self = @This();
         const KEY_NOT_FOUND = @as(T, std.math.maxInt(T));
-        id_to_heap_pos: std.AutoHashMapUnmanaged(u64,u64),
+        id_to_heap_pos: std.AutoHashMapUnmanaged(u64, u64),
         heap: []UpdateablePriorityQueueNode(T, P),
         len: usize,
         allocator: Allocator,
@@ -35,8 +35,8 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
 
         /// Initialize and return a priority queue.
         pub fn init(allocator: Allocator, context: Context) Self {
-            return Self {
-                .id_to_heap_pos = std.AutoHashMapUnmanaged(u64,u64){},
+            return Self{
+                .id_to_heap_pos = std.AutoHashMapUnmanaged(u64, u64){},
                 .heap = &[_]UpdateablePriorityQueueNode(T, P){},
                 .len = 0,
                 .allocator = allocator,
@@ -52,7 +52,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
             return self.len;
         }
 
-        pub fn peek(self: *Self) ?*UpdateablePriorityQueueNode(T,P) {
+        pub fn peek(self: *Self) ?*UpdateablePriorityQueueNode(T, P) {
             if (self.empty()) {
                 return null;
             } else {
@@ -60,11 +60,11 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
             }
         }
 
-        pub fn pop(self: *Self) !UpdateablePriorityQueueNode(T,P) {
+        pub fn pop(self: *Self) !UpdateablePriorityQueueNode(T, P) {
             return self.removeAtHeapIdx(0);
         }
 
-        pub fn removeOrNull(self: *Self) ?UpdateablePriorityQueueNode(T,P) {
+        pub fn removeOrNull(self: *Self) ?UpdateablePriorityQueueNode(T, P) {
             if (self.empty()) {
                 return null;
             } else {
@@ -72,21 +72,21 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
             }
         }
 
-        pub fn removeKey(self: *Self, key: T) ?UpdateablePriorityQueueNode(T,P) {
-						if (self.id_to_heap_pos.get(key)) |pos| {
-							return self.removeAtHeapIdx(pos);
-						}
-						return null;
+        pub fn removeKey(self: *Self, key: T) ?UpdateablePriorityQueueNode(T, P) {
+            if (self.id_to_heap_pos.get(key)) |pos| {
+                return self.removeAtHeapIdx(pos);
+            }
+            return null;
         }
 
-        fn removeAtHeapIdx(self: *Self, index: T) UpdateablePriorityQueueNode(T,P) {
+        fn removeAtHeapIdx(self: *Self, index: T) UpdateablePriorityQueueNode(T, P) {
             const last = self.heap[self.len - 1];
             const item = self.heap[index];
-						_ = self.id_to_heap_pos.remove(item.key);
+            _ = self.id_to_heap_pos.remove(item.key);
 
-						if(self.id_to_heap_pos.getPtr(last.key)) |ptr| {
-							ptr.* = 0;
-						}
+            if (self.id_to_heap_pos.getPtr(last.key)) |ptr| {
+                ptr.* = 0;
+            }
 
             self.heap[index] = last;
             self.len -= 1;
@@ -124,7 +124,7 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
             const node = UpdateablePriorityQueueNode(T, P).init(key, priority);
             self.heap[self.len] = node;
             const idx = @intCast(u32, self.len);
-            self.id_to_heap_pos.put(self.allocator,key,idx) catch @panic("Out of memory");
+            self.id_to_heap_pos.put(self.allocator, key, idx) catch @panic("Out of memory");
             siftUp(self, idx);
             self.len += 1;
         }
@@ -156,11 +156,11 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
 
                 self.id_to_heap_pos.getPtr(child_key).?.* = parent_index;
                 self.id_to_heap_pos.getPtr(parent_key).?.* = child_index;
-                
+
                 child_index = parent_index;
             }
         }
-        
+
         fn siftDown(self: *Self, start_index: u64) void {
             var index = start_index;
             const half = self.len >> 1;
@@ -203,7 +203,6 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
             }
         }
 
-
         pub fn getPriority(self: *Self, key: T) ?P {
             if (self.id_to_heap_pos.get(key)) |idx| {
                 return self.heap[idx].priority;
@@ -215,9 +214,8 @@ pub fn UpdateablePriorityQueue(comptime T: type, comptime P: type, comptime Cont
         /// Free memory used by the queue.
         pub fn deinit(self: Self) void {
             self.allocator.free(self.heap);
-						self.id_to_heap_pos.deinit(self.allocator);
+            self.id_to_heap_pos.deinit(self.allocator);
         }
-
 
         /// Ensure that the queue can fit at least `new_capacity` items.
         pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) !void {
@@ -253,25 +251,25 @@ test "UpdateablePriorityQueue: add and remove min heap" {
     var queue = PQlt.init(std.testing.allocator, {});
     defer queue.deinit();
 
-    const priorities = [_]u32{54, 12, 7, 23, 25, 13};
-    const expected_prio = [_]u32{7, 12, 13, 23, 25, 54};
-    const expected_keys = [_]u32{2, 1, 5, 3, 4, 0};
+    const priorities = [_]u32{ 54, 12, 7, 23, 25, 13 };
+    const expected_prio = [_]u32{ 7, 12, 13, 23, 25, 54 };
+    const expected_keys = [_]u32{ 2, 1, 5, 3, 4, 0 };
 
-    var i: u32 =0;
+    var i: u32 = 0;
     while (i < 6) {
         _ = try queue.updateOrInsert(i, priorities[i]);
-        i+=1;
+        i += 1;
     }
-    i=0;
+    i = 0;
     while (i < 6) {
         const expected_key = expected_keys[i];
         const expected_priorty = expected_prio[i];
-        var res =  try queue.pop();
+        var res = try queue.pop();
         const key = res.key;
         const priority = res.priority;
         try expectEqual(@as(u32, expected_key), key);
         try expectEqual(@as(u32, expected_priorty), priority);
-        i+=1;
+        i += 1;
     }
 }
 //
@@ -291,7 +289,6 @@ test "UpdateablePriorityQueue: add and then update same key" {
     try expectEqual(updated, true);
     updated = try queue.updateOrInsert(5, 13);
     try expectEqual(updated, true);
-
 
     updated = try queue.updateOrInsert(0, 55);
     try expectEqual(updated, false);
@@ -320,7 +317,7 @@ test "UpdateablePriorityQueue: edge case 3 elements" {
 
     _ = try queue.updateOrInsert(0, 3);
     _ = try queue.updateOrInsert(1, 2);
-    _ = try  queue.updateOrInsert(2, 9);
+    _ = try queue.updateOrInsert(2, 9);
     const first = try queue.pop();
     try expectEqual(@as(u32, 2), first.priority);
     const second = try queue.pop();
@@ -337,7 +334,7 @@ test "UpdateablePriorityQueue: sift up with odd indices" {
     var i: u32 = 0;
     for (items) |e| {
         _ = try queue.updateOrInsert(i, e);
-        i+=1;
+        i += 1;
     }
 
     const sorted_items = [_]u32{ 1, 2, 5, 6, 7, 7, 11, 12, 13, 14, 15, 15, 16, 21, 22, 24, 24, 25 };

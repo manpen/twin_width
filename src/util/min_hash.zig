@@ -11,10 +11,7 @@ const dart_hash = @import("dart_hash.zig");
 const updateable_pq = @import("../util/updateable_priority_queue.zig");
 const bfs_mod = @import("../graph/bfs.zig");
 
-pub const MinHashError = error {
-	OutOfMemory,
-	KeyIsMissing
-};
+pub const MinHashError = error{ OutOfMemory, KeyIsMissing };
 
 pub inline fn fisher_yates_shuffle(comptime T: type, data: []T, generator: *std.rand.DefaultPrng) void {
     comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -133,7 +130,7 @@ pub fn MinHashBand(comptime B: u32) type {
         hash_cache: []u32,
         collisions: std.HashMapUnmanaged([]u32, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContext, 80),
         allocator: std.mem.Allocator,
-				downgraded_level: u32,
+        downgraded_level: u32,
         initialized_nodes: std.bit_set.DynamicBitSet,
 
         pub fn clear(self: *Self) void {
@@ -216,7 +213,7 @@ pub fn MinHashBand(comptime B: u32) type {
         }
 
         inline fn addItemFromCache(self: *Self, key: u32) !?*std.AutoArrayHashMapUnmanaged(u32, void) {
-            if (self.collisions.getPtr(self.hash_cache[key * B .. key * B + (B-self.downgraded_level)])) |result| {
+            if (self.collisions.getPtr(self.hash_cache[key * B .. key * B + (B - self.downgraded_level)])) |result| {
                 try result.put(self.allocator, key, {});
                 return result;
             } else {
@@ -259,7 +256,7 @@ pub fn MinHashBand(comptime B: u32) type {
                     self.allocator.free(v.key);
                 }
             } else {
-								return MinHashError.KeyIsMissing;
+                return MinHashError.KeyIsMissing;
             }
             return null;
         }
@@ -291,9 +288,9 @@ pub const SimilarityPriority = struct {
 
     pub fn compare(ctx: void, lhs: SimilarityPriority, rhs: SimilarityPriority) std.math.Order {
         _ = ctx;
-				if(rhs.score == lhs.score) {
-					return std.math.order(lhs.cardinality,rhs.cardinality);
-				}
+        if (rhs.score == lhs.score) {
+            return std.math.order(lhs.cardinality, rhs.cardinality);
+        }
         return std.math.order(rhs.score, lhs.score);
     }
 };
@@ -301,10 +298,10 @@ pub const SimilarityPriority = struct {
 pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
     return struct {
         const Self = @This();
-				pub const PriorityItem = struct {
-					key: u64,
-					prio: SimilarityPriority,
-				};
+        pub const PriorityItem = struct {
+            key: u64,
+            prio: SimilarityPriority,
+        };
 
         bands: []MinHashBand(B),
         hit_map: std.AutoHashMapUnmanaged(u64, u32),
@@ -313,8 +310,8 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
         number_of_nodes: u32,
         allocator: std.mem.Allocator,
         graph: *graph_mod.Graph(T),
-				canidate_count:u32,
-				canidate_list: std.ArrayListUnmanaged(PriorityItem),
+        canidate_count: u32,
+        canidate_list: std.ArrayListUnmanaged(PriorityItem),
 
         const NodeIteratorSplitRedBlack = struct {
             number_of_nodes: u32,
@@ -388,7 +385,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                         }
                         // Untrack this node now!
                     } else {
-												return error.OutOfMemory;
+                        return error.OutOfMemory;
                     }
                 }
             }
@@ -477,53 +474,53 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                 b.clear();
                 b.randomize_functions(&random);
             }
-            
-						self.hit_map.clearRetainingCapacity();
+
+            self.hit_map.clearRetainingCapacity();
             while (self.sim_pq.removeOrNull()) |_| {}
 
-						const split = self.bands.len / 3;
+            const split = self.bands.len / 3;
 
-						visited.unsetAll();
-						stack.clear();
-						if(nodes.len == 0) return;
-						var bfs = bfs_mod.bfs(T,nodes[0],graph,visited,stack,.{.kind = .both, .max_level = std.math.maxInt(T)});
-						while(bfs.next()) |node| {
-							if(graph.erased_nodes.get(node)) continue;
-							if(self.hit_map.count() > 10_000) break;
-							for (0..split) |index| {
-								var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator() };
-								try self.bands[index].rehashItemNoRemove(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.addedCallback);
-							}
-							for (split..split * 2) |index| {
-								var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node };
-								try self.bands[index].rehashItemNoRemove(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self,Self.addedCallback);
-							}
-							for (split * 2..self.bands.len) |index| {
-								var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node + self.number_of_nodes };
-								try self.bands[index].rehashItemNoRemove(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.addedCallback);
-							}
-						}
-						visited.unsetAll();
-						stack.clear();
+            visited.unsetAll();
+            stack.clear();
+            if (nodes.len == 0) return;
+            var bfs = bfs_mod.bfs(T, nodes[0], graph, visited, stack, .{ .kind = .both, .max_level = std.math.maxInt(T) });
+            while (bfs.next()) |node| {
+                if (graph.erased_nodes.get(node)) continue;
+                if (self.hit_map.count() > 10_000) break;
+                for (0..split) |index| {
+                    var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator() };
+                    try self.bands[index].rehashItemNoRemove(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.addedCallback);
+                }
+                for (split..split * 2) |index| {
+                    var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node };
+                    try self.bands[index].rehashItemNoRemove(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.addedCallback);
+                }
+                for (split * 2..self.bands.len) |index| {
+                    var iter = NodeIteratorSplitRedBlack{ .number_of_nodes = graph.number_of_nodes, .iter = graph.node_list[node].unorderedIterator(), .final_node = node + self.number_of_nodes };
+                    try self.bands[index].rehashItemNoRemove(*NodeIteratorSplitRedBlack, @TypeOf(self), node, &iter, self, Self.addedCallback);
+                }
+            }
+            visited.unsetAll();
+            stack.clear();
         }
 
-				pub const TwinWidthPriorityContraction = struct {
-					tww: T,
-					merge: contraction.Contraction(T),
-					pub fn compare(ctx: void, lhs: TwinWidthPriorityContraction, rhs: TwinWidthPriorityContraction) std.math.Order {
-					    _ = ctx;
-						return std.math.order(lhs.tww,rhs.tww);
-					}
-					pub fn compareInverse(ctx: void, lhs: T, rhs: T) std.math.Order {
-					    _ = ctx;
-						return std.math.order(rhs,lhs);
-					}
-				};
+        pub const TwinWidthPriorityContraction = struct {
+            tww: T,
+            merge: contraction.Contraction(T),
+            pub fn compare(ctx: void, lhs: TwinWidthPriorityContraction, rhs: TwinWidthPriorityContraction) std.math.Order {
+                _ = ctx;
+                return std.math.order(lhs.tww, rhs.tww);
+            }
+            pub fn compareInverse(ctx: void, lhs: T, rhs: T) std.math.Order {
+                _ = ctx;
+                return std.math.order(rhs, lhs);
+            }
+        };
 
         pub fn getBestMove(self: *Self, graph: *graph_mod.Graph(T), current_tww: T) !?contraction.Contraction(T) {
             var min_cont: ?contraction.Contraction(T) = null;
 
-						self.canidate_list.clearRetainingCapacity();
+            self.canidate_list.clearRetainingCapacity();
 
             var best_tww = graph_mod.Graph(T).InducedTwinWidthPotential.default();
             while (self.sim_pq.removeOrNull()) |it| {
@@ -547,7 +544,6 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
                 }
             }
 
-
             for (self.canidate_list.items) |it| {
                 _ = try self.sim_pq.updateOrInsert(it.key, it.prio);
             }
@@ -566,7 +562,7 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
 
             var hit_map = std.AutoHashMapUnmanaged(u64, u32){};
 
-            var sim_pq = updateable_pq.UpdateablePriorityQueue(u64, SimilarityPriority, void, SimilarityPriority.compare).init(allocator,{}); 
+            var sim_pq = updateable_pq.UpdateablePriorityQueue(u64, SimilarityPriority, void, SimilarityPriority.compare).init(allocator, {});
 
             return Self{ .bands = bands, .hit_map = hit_map, .allocator = allocator, .number_of_nodes = number_of_nodes, .graph = undefined, .sim_pq = sim_pq, .canidate_count = 20, .canidate_list = try std.ArrayListUnmanaged(PriorityItem).initCapacity(allocator, number_of_nodes) };
         }

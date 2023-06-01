@@ -145,7 +145,7 @@ pub fn ConnectedComponent(comptime T: type) type {
 
             var final_tww: T = self.tww;
             for (0..8) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), GraphScorer(T), &ctx_node, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww,seed);
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), GraphScorer(T), &ctx_node, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
                 if (result < final_tww) {
                     try self.update_best();
                 }
@@ -162,7 +162,7 @@ pub fn ConnectedComponent(comptime T: type) type {
             };
             ctx_min_sim.initAll();
             for (0..3) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_min_sim), &ctx_node, &ctx_min_sim, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww,seed);
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_min_sim), &ctx_node, &ctx_min_sim, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
                 if (result < final_tww) {
                     try self.update_best();
                 }
@@ -174,7 +174,7 @@ pub fn ConnectedComponent(comptime T: type) type {
 
             var node_edge_reducer = node_scorers.NodeScorerEdgeReducer(T){ .seq = &self.current_contraction_seq };
             for (0..5) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(node_edge_reducer), @TypeOf(ctx_score), &node_edge_reducer, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww,seed);
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(node_edge_reducer), @TypeOf(ctx_score), &node_edge_reducer, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
                 if (result < final_tww) {
                     try self.update_best();
                 }
@@ -191,7 +191,7 @@ pub fn ConnectedComponent(comptime T: type) type {
             };
             ctx_min_sim_min.initAll();
             for (0..3) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_min_sim_min), &ctx_node, &ctx_min_sim_min, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww,seed);
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_min_sim_min), &ctx_node, &ctx_min_sim_min, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
                 if (result < final_tww) {
                     try self.update_best();
                 }
@@ -204,7 +204,7 @@ pub fn ConnectedComponent(comptime T: type) type {
 
             var ctx_weighted_scorer = GraphScorerWeightedMajor(T){};
             for (0..4) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_new_reds), @TypeOf(ctx_score), &ctx_new_reds, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww,seed);
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_new_reds), @TypeOf(ctx_score), &ctx_new_reds, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
                 if (result < final_tww) {
                     try self.update_best();
                 }
@@ -214,7 +214,7 @@ pub fn ConnectedComponent(comptime T: type) type {
             }
 
             for (0..2) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_weighted_scorer_min), &ctx_node, &ctx_weighted_scorer_min, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww,seed);
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_weighted_scorer_min), &ctx_node, &ctx_weighted_scorer_min, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
                 if (result < final_tww) {
                     try self.update_best();
                 }

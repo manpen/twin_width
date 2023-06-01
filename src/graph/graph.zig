@@ -467,7 +467,7 @@ pub fn Graph(comptime T: type) type {
 
             var new_red_edges: i32 = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
-						var correction_factor:T = 0;
+            var correction_factor: T = 0;
 
             // Intuition is as following:
             // New red edges to nodes with a lot of red edges should decrease
@@ -475,7 +475,7 @@ pub fn Graph(comptime T: type) type {
 
             while (red_iter.next()) |item| {
                 if (item == survivor) {
-										correction_factor = 1;
+                    correction_factor = 1;
                     new_red_edges -= 1;
                     continue;
                 }
@@ -877,7 +877,7 @@ pub fn Graph(comptime T: type) type {
                 try org_graph.append(try exact_bs.matrixGraphUnionFromInducedSubGraph(T, &cc.subgraph, self.allocator));
             }
 
-            var heu_tww = @intCast(u32, try self.solveGreedy(.{.timeout_seconds = 30}));
+            var heu_tww = @intCast(u32, try self.solveGreedy(.{ .timeout_seconds = 30 }));
 
             if (true) {
                 std.debug.print("Heuristic TWW: {d}\n", .{heu_tww});
@@ -974,59 +974,55 @@ pub fn Graph(comptime T: type) type {
             }
         }
 
-
-				pub const SolvingOptions = struct {
-					timeout_seconds: ?u64 = null,
-					single_pass:bool = true
-				};
+        pub const SolvingOptions = struct { timeout_seconds: ?u64 = null, single_pass: bool = true };
 
         pub fn solveGreedy(self: *Self, solving_options: SolvingOptions) !T {
             const K = 15;
             const P = 100;
 
-						if(solving_options.timeout_seconds != null and solving_options.single_pass == true) return GraphError.ConflictingSolverOptions;
-						const timeout_seconds = solving_options.timeout_seconds;
+            if (solving_options.timeout_seconds != null and solving_options.single_pass == true) return GraphError.ConflictingSolverOptions;
+            const timeout_seconds = solving_options.timeout_seconds;
 
             // NOTICE: This function is single pass at the moment!
             var solver = try solver_resources.SolverResources(T, K, P).init(self);
             defer solver.deinit(self.allocator);
 
-						var time = try std.time.Instant.now();
+            var time = try std.time.Instant.now();
 
-						var seed:u64 = 19;
+            var seed: u64 = 19;
 
             self.contraction.reset();
             while (self.connected_components_min_heap.removeOrNull()) |cc| {
-								if(solving_options.single_pass and self.connected_components.items[cc.index].iteration >= 2) {
-									try self.connected_components_min_heap.add(cc);
-									break;
-								}
+                if (solving_options.single_pass and self.connected_components.items[cc.index].iteration >= 2) {
+                    try self.connected_components_min_heap.add(cc);
+                    break;
+                }
 
                 var cc_inst = &self.connected_components.items[cc.index];
-								try cc_inst.resetGraph();
+                try cc_inst.resetGraph();
 
                 if (T == u8 and cc_inst.subgraph.nodes.len < 128) {
-                    _ = try cc_inst.solveGreedy(K, P, &solver,seed);
+                    _ = try cc_inst.solveGreedy(K, P, &solver, seed);
                 } else {
-                    _ = try cc_inst.solveGreedyTopK(K, P, &solver,seed);
+                    _ = try cc_inst.solveGreedyTopK(K, P, &solver, seed);
                 }
-								seed += 1009;
-								try self.connected_components_min_heap.add(connected_components.ConnectedComponentIndex(T) {
-									.index = cc.index,
-									.tww = cc_inst.tww,
-								});
+                seed += 1009;
+                try self.connected_components_min_heap.add(connected_components.ConnectedComponentIndex(T){
+                    .index = cc.index,
+                    .tww = cc_inst.tww,
+                });
 
-								if(timeout_seconds) |ts| {
-									const now = try std.time.Instant.now();
-									if(now.since(time) > 1000_000_000*ts) {
-										break;
-									}
-								}
+                if (timeout_seconds) |ts| {
+                    const now = try std.time.Instant.now();
+                    if (now.since(time) > 1000_000_000 * ts) {
+                        break;
+                    }
+                }
             }
 
-						const index = self.connected_components_min_heap.peek().?;
-						// Tww is twin width of the connected component with the largest twin width
-						const tww = self.connected_components.items[index.index].tww;
+            const index = self.connected_components_min_heap.peek().?;
+            // Tww is twin width of the connected component with the largest twin width
+            const tww = self.connected_components.items[index.index].tww;
 
             try self.combineContractionSequences();
 
@@ -1045,7 +1041,7 @@ pub fn Graph(comptime T: type) type {
 
             //TODO: Add some errdefer's here
 
-            var graph = Self {
+            var graph = Self{
                 .number_of_nodes = number_of_nodes,
                 .number_of_edges = 0,
                 .node_list = node_list,

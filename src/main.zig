@@ -35,7 +35,7 @@ comptime {
 const builtin = @import("builtin");
 
 pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, filename: []const u8, short_name: []const u8) !T {
-		// 138 OOM
+    // 138 OOM
     var timer = try std.time.Instant.now();
     var pace_part = pace.Pace2023Fmt(T).fromFile(allocator, filename) catch |err| {
         std.debug.print("Error load from file {}\n", .{err});
@@ -49,7 +49,7 @@ pub fn inner_initial_solver(comptime T: type, allocator: std.mem.Allocator, file
     defer loaded_graph.deinit();
 
     _ = try loaded_graph.findAllConnectedComponents();
-    const tww = loaded_graph.solveGreedy(.{.single_pass = true}) catch |err| {
+    const tww = loaded_graph.solveGreedy(.{ .single_pass = true }) catch |err| {
         std.debug.print("Error {}\n", .{err});
         return err;
     };

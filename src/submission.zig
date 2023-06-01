@@ -12,15 +12,15 @@ pub fn inner_initial_solver_memory(comptime T: type, allocator: std.mem.Allocato
     defer pace_inst.deinit(allocator);
     var loaded_graph = graph.Graph(T).loadFromPace(allocator, &pace_inst) catch |err| {
         //Print error message if the graph could not be loaded
-				// Spin lock
-				while(heuristic) {}
+        // Spin lock
+        while (heuristic) {}
         return err;
     };
     defer loaded_graph.deinit();
 
     signal_handler.initialize_signal_handler(try loaded_graph.findAllConnectedComponents());
-    _ = loaded_graph.solveGreedy(.{.single_pass = false}) catch |err| {
-				while(heuristic) {}
+    _ = loaded_graph.solveGreedy(.{ .single_pass = false }) catch |err| {
+        while (heuristic) {}
         return err;
     };
     //std.debug.print("Finished solving, entering infinite loop and waiting for SIGTERM.\n", .{});

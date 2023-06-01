@@ -11,7 +11,7 @@ The only explicit dependency is the Zig compiler.
 After the installation of the compiler ---([essentially unpacking of the packages linked before](https://ziglang.org/learn/getting-started/#installing-zig))--- run the following command to build the solvers and expect a build time of roughly a minute.
 
 ```
-zig build run -Doptimize=ReleaseFast -Dcpu=native
+zig build -Doptimize=ReleaseFast -Dcpu=native
 ```
 
 If everything works fine (if not please check the installed Zig version!) the binaries are generated in the directory `zig-out/bin`.

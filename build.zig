@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const sub = b.addExecutable(.{
-        .name = "solver",
+        .name = "solver_heuristic",
         .root_source_file = .{ .path = "src/submission.zig" },
         .target = target,
         .optimize = optimize,
@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
 
     const run_sub = b.addRunArtifact(sub);
     run_sub.step.dependOn(b.getInstallStep());
-    const solver_step = b.step("solver", "Compile solver for submission");
+    const solver_step = b.step("solver_heuristic", "Compile heuristic solver for submission");
     solver_step.dependOn(b.getInstallStep());
 
     /////////////////////////////
@@ -36,8 +36,7 @@ pub fn build(b: *std.Build) void {
 
     const run_sub_exact = b.addRunArtifact(sub_exact);
     run_sub_exact.step.dependOn(b.getInstallStep());
-    const solver_step_exact = b.step("solver_exact", "Compile solver for submission");
+    const solver_step_exact = b.step("solver_exact", "Compile exact solver for submission");
     solver_step_exact.dependOn(b.getInstallStep());
-
     
 }

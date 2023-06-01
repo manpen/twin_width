@@ -38,7 +38,7 @@ const FeatureReuseCandidates: bool = true;
 const FeatureParanoidCandidates: bool = FeatureReuseCandidates and false; // additional expensive assertions
 const FeatureSkipProcessed: bool = FeatureReuseCandidates and true;
 
-const FeatureShrinkGraph: bool = false;
+const FeatureShrinkGraph: bool = true;
 
 const FeatureSkipInfeasibleCandidatesEarly: bool = true;
 const FeatureSkipPathNodes: bool = true;
@@ -63,7 +63,7 @@ const FeaturePruneGeneralizedTwins: bool = FeaturePruning and false;
 const FeaturePruneBlackCCs: bool = FeaturePruning and false;
 
 const FeatureComplements: bool = false; // BROKEN
-const FeatureOuterPathPruning: bool = FeaturePruning and true;
+const FeatureOuterPathPruning: bool = FeaturePruning and false;
 
 const FeatureTryLBFirst: bool = true;
 const BudgetSubgraphLB: u64 = 20_000; // ms

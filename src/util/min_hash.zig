@@ -212,8 +212,60 @@ pub fn MinHashBand(comptime B: u32) type {
             }
         }
 
+				pub inline fn downgradeBand(self: *Self, hit_map: *std.AutoHashMapUnmanaged(u64,u32)) !void {
+					if(self.downgraded_level == B-1) return;
+					self.downgraded_level += 1;
+					var second_collisions_map = std.HashMapUnmanaged([]u32, std.AutoArrayHashMapUnmanaged(u32, void), MinHashBandContext, 80){};
+					try second_collisions_map.ensureTotalCapacity(self.allocator, self.collisions.count());
+					var iterator = self.collisions.iterator();
+					while(iterator.next()) |item| {
+						if(second_collisions_map.getPtr(item.key_ptr.*[0..(B-self.downgraded_level)])) |hits| {
+							var iter_inner = item.value_ptr.iterator();
+							while(iter_inner.next()) |inner_item| {
+								try hits.put(self.allocator, inner_item.key_ptr.*, {});
+							}
+
+							var hits_iter_outer = hits.iterator();
+							while(hits_iter_outer.next()) |inner_item| {
+								var hits_iter_inner = hits.iterator();
+								while(hits_iter_inner.next()) |inner_item_second| {
+									if(inner_item.key_ptr.* == inner_item_second.key_ptr.*) continue;
+									const unique_key = MinHashSimilarity(u32,B).calculateUniqueKey(inner_item.key_ptr.*,inner_item_second.key_ptr.*);
+									if(hit_map.getPtr(unique_key)) |v| {
+										v.* += 1;
+									}
+									else {
+										try hit_map.put(self.allocator, unique_key, 1);
+									}
+								}
+							}
+
+							item.value_ptr.deinit(self.allocator);
+						}
+						else {
+							try second_collisions_map.put(self.allocator,item.key_ptr.*[0..(B-self.downgraded_level)], item.value_ptr.*);
+							var hits_iter_outer = item.value_ptr.iterator();
+							while(hits_iter_outer.next()) |inner_item| {
+								var hits_iter_inner = item.value_ptr.iterator();
+								while(hits_iter_inner.next()) |inner_item_second| {
+									if(inner_item.key_ptr.* == inner_item_second.key_ptr.*) continue;
+									const unique_key = MinHashSimilarity(u32,B).calculateUniqueKey(inner_item.key_ptr.*,inner_item_second.key_ptr.*);
+									if(hit_map.getPtr(unique_key)) |v| {
+										v.* += 1;
+									}
+									else {
+										try hit_map.put(self.allocator, unique_key, 1);
+									}
+								}
+							}
+						}
+					}
+					self.collisions.deinit(self.allocator);
+					self.collisions = second_collisions_map;
+				}
+
         inline fn addItemFromCache(self: *Self, key: u32) !?*std.AutoArrayHashMapUnmanaged(u32, void) {
-            if (self.collisions.getPtr(self.hash_cache[key * B .. key * B + (B - self.downgraded_level)])) |result| {
+            if (self.collisions.getPtr(self.getSignature(key))) |result| {
                 try result.put(self.allocator, key, {});
                 return result;
             } else {
@@ -222,7 +274,7 @@ pub fn MinHashBand(comptime B: u32) type {
 
                 var new_list = std.AutoArrayHashMapUnmanaged(u32, void){};
                 try new_list.put(self.allocator, key, {});
-                try self.collisions.put(self.allocator, copy, new_list);
+                try self.collisions.put(self.allocator, copy[0..(B-self.downgraded_level)], new_list);
             }
             return null;
         }
@@ -240,7 +292,7 @@ pub fn MinHashBand(comptime B: u32) type {
         }
 
         pub inline fn getSignature(self: *const Self, key: u32) []u32 {
-            return self.hash_cache[key * B .. key * B + B];
+            return self.hash_cache[key * B .. key * B + (B-self.downgraded_level)];
         }
 
         pub inline fn removeItem(self: *Self, key: u32) MinHashError!?*std.AutoArrayHashMapUnmanaged(u32, void) {
@@ -521,6 +573,20 @@ pub fn MinHashSimilarity(comptime T: type, comptime B: u32) type {
             var min_cont: ?contraction.Contraction(T) = null;
 
             self.canidate_list.clearRetainingCapacity();
+						
+						if(self.sim_pq.len < self.canidate_count*2) {
+							self.hit_map.clearRetainingCapacity();
+							for(0..self.bands.len) |index| {
+								try self.bands[index].downgradeBand(&self.hit_map);
+							}
+
+							var hit_iter = self.hit_map.iterator();
+							while(hit_iter.next()) |hit| {
+								const mv = Self.keyIntoMove(hit.key_ptr.*);
+                const prio = SimilarityPriority.fromScoreAndNodes(T, mv.erased, mv.survivor, hit.value_ptr.*, self.graph);
+								_ = try self.sim_pq.updateOrInsert(hit.key_ptr.*, prio);
+							}
+						}
 
             var best_tww = graph_mod.Graph(T).InducedTwinWidthPotential.default();
             while (self.sim_pq.removeOrNull()) |it| {

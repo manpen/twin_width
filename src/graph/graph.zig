@@ -135,7 +135,6 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub fn revertLastContraction(self: *Self, seq: *RetraceableContractionSequence(T)) !void {
-            // WARNING: Is not usable yet since it will not restore num leafes at the moment this function will not restore exactly the same state as before!
             if (seq.lastContraction()) |last| {
                 self.scratch_bitset.unsetAll();
                 _ = self.erased_nodes.unset(last.erased);

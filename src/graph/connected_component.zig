@@ -52,7 +52,7 @@ pub fn ConnectedComponent(comptime T: type) type {
         best_contraction_sequence: contraction.ContractionSequence(T),
         current_contraction_seq: retraceable_contraction.RetraceableContractionSequence(T),
         tww: T,
-        bfs_levels: u32,
+        iteration: u32,
         contraction_slice: []u32,
         backup_contraction_slice: []u32,
 
@@ -67,12 +67,20 @@ pub fn ConnectedComponent(comptime T: type) type {
             const result = try self.subgraph.solveSweepingSolverTopK(K, P, &self.current_contraction_seq, solver, probing, seed);
             if (result < self.tww) {
                 try self.update_best();
-                self.tww = result;
+            }
+            return result;
+        }
+
+        pub fn solveSweepingTopKPrecision(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), seed: u64) !T {
+            const result = try self.subgraph.solveSweepingSolverTopKPrecision(K, P, &self.current_contraction_seq, solver, self.iteration, seed);
+            if (result < self.tww) {
+                try self.update_best();
             }
             return result;
         }
 
         fn update_best(self: *Self) !void {
+            self.tww = self.current_contraction_seq.getTwinWidth();
             self.current_contraction_seq.seq.write_to_slice(self.backup_contraction_slice);
             // swap ensure that the global slice is updated by a simple redirection of a pointer.
             // TECHNICALLY this is not atomic, as it consists of two assignments (length and pointer).
@@ -84,27 +92,43 @@ pub fn ConnectedComponent(comptime T: type) type {
         }
 
         pub fn solveGreedyTopK(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), seed: u64) !T {
-            var result = try self.subgraph.solveGreedyTopK(K, P, &self.current_contraction_seq, solver, true, seed, self.tww);
+            var result: T = undefined;
+            if (self.iteration == 0) {
+                result = try self.subgraph.solveGreedyTopK(K, P, &self.current_contraction_seq, solver, true, seed, self.tww);
 
-            if (result < self.tww) {
-                try self.update_best();
-                self.tww = result;
-            }
+                if (result < self.tww) {
+                    try self.update_best();
+                }
 
-            if (self.tww < 200 or self.subgraph.nodes.len < 3700) {
-                if (self.subgraph.nodes.len > 2_000_000 and self.tww >= 90) {} else {
+                if (self.tww < 200 or self.subgraph.nodes.len < 10_000) {
                     try self.resetGraph();
                     solver.reset();
                     const sweeping = try self.solveSweepingTopK(K, P, solver, false, seed);
                     result = std.math.min(sweeping, result);
+                    try self.resetGraph();
+                } else if (self.tww < 500) {
+                    try self.resetGraph();
+                    solver.reset();
+                    const sweeping = try self.solveSweepingTopK(K, P, solver, true, seed);
+                    result = std.math.min(sweeping, result);
                 }
-            } else if (self.tww < 500) {
-                try self.resetGraph();
-                solver.reset();
-                const sweeping = try self.solveSweepingTopK(K, P, solver, true, seed);
-                result = std.math.min(sweeping, result);
+            } else {
+                if (self.tww < 200 or self.subgraph.nodes.len < 10_000) {
+                    try self.resetGraph();
+                    solver.reset();
+                    const sweeping = try self.solveSweepingTopKPrecision(K, P, solver, seed);
+                    result = std.math.min(sweeping, result);
+                } else if (self.subgraph.nodes.len >= 500) {
+                    try self.resetGraph();
+                    solver.reset();
+                    result = try self.subgraph.solveGreedyTopKMinHash(K, P, &self.current_contraction_seq, solver, self.iteration, seed, self.tww);
+                    if (result < self.tww) {
+                        try self.update_best();
+                    }
+                }
             }
 
+            self.iteration += 1;
             return result;
         }
 
@@ -115,23 +139,17 @@ pub fn ConnectedComponent(comptime T: type) type {
         }
 
         pub fn solveGreedy(self: *Self, comptime K: u32, comptime P: u32, solver: *solver_resources.SolverResources(T, K, P), seed: u64) !T {
-            _ = seed;
             var ctx_node = NodeScorerInduced(T){};
             var ctx_score = GraphScorer(T){};
+            self.iteration += 1;
 
-            var final_tww: ?T = null;
+            var final_tww: T = self.tww;
             for (0..8) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), GraphScorer(T), &ctx_node, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-                self.tww = result;
-                if (final_tww == null) {
-                    final_tww = result;
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), GraphScorer(T), &ctx_node, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
+                if (result < final_tww) {
                     try self.update_best();
-                } else {
-                    if (result < final_tww.?) {
-                        try self.update_best();
-                    }
-                    final_tww = std.math.min(result, final_tww.?);
                 }
+                final_tww = std.math.min(result, final_tww);
 
                 try self.resetGraph();
             }
@@ -144,17 +162,11 @@ pub fn ConnectedComponent(comptime T: type) type {
             };
             ctx_min_sim.initAll();
             for (0..3) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_min_sim), &ctx_node, &ctx_min_sim, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-                self.tww = result;
-                if (final_tww == null) {
-                    final_tww = result;
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_min_sim), &ctx_node, &ctx_min_sim, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
+                if (result < final_tww) {
                     try self.update_best();
-                } else {
-                    if (result < final_tww.?) {
-                        try self.update_best();
-                    }
-                    final_tww = std.math.min(result, final_tww.?);
                 }
+                final_tww = std.math.min(result, final_tww);
 
                 try self.resetGraph();
             }
@@ -162,17 +174,11 @@ pub fn ConnectedComponent(comptime T: type) type {
 
             var node_edge_reducer = node_scorers.NodeScorerEdgeReducer(T){ .seq = &self.current_contraction_seq };
             for (0..5) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(node_edge_reducer), @TypeOf(ctx_score), &node_edge_reducer, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-                self.tww = result;
-                if (final_tww == null) {
-                    final_tww = result;
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(node_edge_reducer), @TypeOf(ctx_score), &node_edge_reducer, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
+                if (result < final_tww) {
                     try self.update_best();
-                } else {
-                    if (result < final_tww.?) {
-                        try self.update_best();
-                    }
-                    final_tww = std.math.min(result, final_tww.?);
                 }
+                final_tww = std.math.min(result, final_tww);
 
                 try self.resetGraph();
             }
@@ -185,17 +191,11 @@ pub fn ConnectedComponent(comptime T: type) type {
             };
             ctx_min_sim_min.initAll();
             for (0..3) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_min_sim_min), &ctx_node, &ctx_min_sim_min, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-                self.tww = result;
-                if (final_tww == null) {
-                    final_tww = result;
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_min_sim_min), &ctx_node, &ctx_min_sim_min, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
+                if (result < final_tww) {
                     try self.update_best();
-                } else {
-                    if (result < final_tww.?) {
-                        try self.update_best();
-                    }
-                    final_tww = std.math.min(result, final_tww.?);
                 }
+                final_tww = std.math.min(result, final_tww);
 
                 try self.resetGraph();
             }
@@ -204,74 +204,50 @@ pub fn ConnectedComponent(comptime T: type) type {
 
             var ctx_weighted_scorer = GraphScorerWeightedMajor(T){};
             for (0..4) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_new_reds), @TypeOf(ctx_score), &ctx_new_reds, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-                self.tww = result;
-                if (final_tww == null) {
-                    final_tww = result;
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_new_reds), @TypeOf(ctx_score), &ctx_new_reds, &ctx_score, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
+                if (result < final_tww) {
                     try self.update_best();
-                } else {
-                    if (result < final_tww.?) {
-                        try self.update_best();
-                    }
-                    final_tww = std.math.min(result, final_tww.?);
                 }
+                final_tww = std.math.min(result, final_tww);
 
                 try self.resetGraph();
             }
 
             for (0..2) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_weighted_scorer_min), &ctx_node, &ctx_weighted_scorer_min, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-                self.tww = result;
-                if (final_tww == null) {
-                    final_tww = result;
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_weighted_scorer_min), &ctx_node, &ctx_weighted_scorer_min, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
+                if (result < final_tww) {
                     try self.update_best();
-                } else {
-                    if (result < final_tww.?) {
-                        try self.update_best();
-                    }
-                    final_tww = std.math.min(result, final_tww.?);
                 }
+                final_tww = std.math.min(result, final_tww);
 
                 try self.resetGraph();
             }
 
             for (0..2) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_weighted_scorer), &ctx_node, &ctx_weighted_scorer, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-                self.tww = result;
-                if (final_tww == null) {
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(ctx_node), @TypeOf(ctx_weighted_scorer), &ctx_node, &ctx_weighted_scorer, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
+                if (result < final_tww) {
                     try self.update_best();
-                    final_tww = result;
-                } else {
-                    if (result < final_tww.?) {
-                        try self.update_best();
-                    }
-                    final_tww = std.math.min(result, final_tww.?);
                 }
+                final_tww = std.math.min(result, final_tww);
 
                 try self.resetGraph();
             }
 
             var selector_simple = NodeScorerSimple(T){};
             for (0..2) |i| {
-                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(selector_simple), @TypeOf(ctx_weighted_scorer), &selector_simple, &ctx_weighted_scorer, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww);
-                self.tww = result;
-                if (final_tww == null) {
+                const result = try self.subgraph.solveGreedyLookahead(@TypeOf(selector_simple), @TypeOf(ctx_weighted_scorer), &selector_simple, &ctx_weighted_scorer, K, @intCast(T, i), &self.current_contraction_seq, &solver.bfs_stack, &solver.scratch_bitset, final_tww, seed);
+                if (result < final_tww) {
                     try self.update_best();
-                    final_tww = result;
-                } else {
-                    if (result < final_tww.?) {
-                        try self.update_best();
-                    }
-                    final_tww = std.math.min(result, final_tww.?);
                 }
+                final_tww = std.math.min(result, final_tww);
 
                 try self.resetGraph();
             }
 
-            return final_tww.?;
+            return final_tww;
         }
 
-        pub fn init(allocator: std.mem.Allocator, nodes: []T, bfs_level: u32, graph: *graph_mod.Graph(T)) !Self {
+        pub fn init(allocator: std.mem.Allocator, nodes: []T, graph: *graph_mod.Graph(T)) !Self {
             var contraction_seq = try contraction.ContractionSequence(T).init(allocator, @intCast(u32, nodes.len));
             var previous: ?T = null;
             var number_of_edges: u32 = 0;
@@ -314,7 +290,7 @@ pub fn ConnectedComponent(comptime T: type) type {
             number_of_edges = number_of_edges >> 1;
             var retraceable = try retraceable_contraction.RetraceableContractionSequence(T).init(graph.allocator, @intCast(T, nodes.len), number_of_edges);
             return .{
-                .bfs_levels = bfs_level,
+                .iteration = 0,
                 .subgraph = InducedSubGraph(T).fromSlice(graph, nodes),
                 .tww = @intCast(T, nodes.len - 1),
                 .best_contraction_sequence = contraction_seq,

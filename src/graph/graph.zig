@@ -18,7 +18,7 @@ const exact_bs = @import("../exact/bootstrapping.zig");
 const pace_2023 = @import("../pace_2023/pace_fmt.zig");
 
 pub const GraphError = error{ FileNotFound, //
-NotPACEFormat, GraphTooLarge, MisformedEdgeList, InvalidContractionOneNodeErased, ContractionOverflow, NoContractionLeft, NegativeNumberOfLeafes, ExactSuboptimal };
+NotPACEFormat, GraphTooLarge, MisformedEdgeList, InvalidContractionOneNodeErased, ContractionOverflow, NoContractionLeft, NegativeNumberOfLeafes, ExactSuboptimal, ConflictingSolverOptions };
 
 pub fn Graph(comptime T: type) type {
     comptime if (!comptime_util.checkIfIsCompatibleInteger(T)) {
@@ -72,7 +72,7 @@ pub fn Graph(comptime T: type) type {
         last_merge_first_level_merge: bool,
         last_merge_red_edges_erased: std.ArrayListUnmanaged(T),
 
-        min_hash: min_hash_mod.MinHashSimilarity(T, 4),
+        min_hash: min_hash_mod.MinHashSimilarity(T, 3),
 
         // Usually the exact tries to find a solution that is strictly better than
         // the heuristic one (oftentimes only proving a lower bound). If set to true,
@@ -174,28 +174,28 @@ pub fn Graph(comptime T: type) type {
                     switch (red_edge.edge_type) {
                         .black_to_red_own => {
                             // Remove red edge
-                            _ = try self.node_list[last.survivor].red_edges.remove(self.allocator, red_edge.target);
-                            _ = try self.node_list[red_edge.target].red_edges.remove(self.allocator, last.survivor);
+                            _ = try self.node_list[last.survivor].removeRedEdge(self.allocator, red_edge.target);
+                            _ = try self.node_list[red_edge.target].removeRedEdge(self.allocator, last.survivor);
 
                             // Readd black edge
-                            try self.node_list[last.survivor].black_edges.add(self.allocator, red_edge.target);
-                            try self.node_list[red_edge.target].black_edges.add(self.allocator, last.survivor);
+                            try self.node_list[last.survivor].addBlackEdge(self.allocator, red_edge.target);
+                            try self.node_list[red_edge.target].addBlackEdge(self.allocator, last.survivor);
                         },
                         .black_to_red_other => {
                             // Remove red edge
-                            _ = try self.node_list[last.survivor].red_edges.remove(self.allocator, red_edge.target);
+                            _ = try self.node_list[last.survivor].removeRedEdge(self.allocator, red_edge.target);
 
-                            _ = try self.node_list[red_edge.target].red_edges.remove(self.allocator, last.survivor);
+                            _ = try self.node_list[red_edge.target].removeRedEdge(self.allocator, last.survivor);
                         },
                         .black_to_deleted => {
-                            try self.node_list[last.survivor].black_edges.add(self.allocator, red_edge.target);
+                            try self.node_list[last.survivor].addBlackEdge(self.allocator, red_edge.target);
 
-                            try self.node_list[red_edge.target].black_edges.add(self.allocator, last.survivor);
+                            try self.node_list[red_edge.target].addBlackEdge(self.allocator, last.survivor);
                         },
                         .red_to_deleted => {
-                            try self.node_list[last.survivor].red_edges.add(self.allocator, red_edge.target);
+                            try self.node_list[last.survivor].addRedEdge(self.allocator, red_edge.target);
 
-                            try self.node_list[red_edge.target].red_edges.add(self.allocator, last.survivor);
+                            try self.node_list[red_edge.target].addRedEdge(self.allocator, last.survivor);
                         },
                     }
                 }
@@ -467,7 +467,7 @@ pub fn Graph(comptime T: type) type {
 
             var new_red_edges: i32 = 0;
             var red_iter = self.node_list[erased].red_edges.iterator();
-            var before_red_card = self.node_list[survivor].red_edges.cardinality();
+            var correction_factor: T = 0;
 
             // Intuition is as following:
             // New red edges to nodes with a lot of red edges should decrease
@@ -475,6 +475,8 @@ pub fn Graph(comptime T: type) type {
 
             while (red_iter.next()) |item| {
                 if (item == survivor) {
+                    correction_factor = 1;
+                    new_red_edges -= 1;
                     continue;
                 }
 
@@ -482,12 +484,12 @@ pub fn Graph(comptime T: type) type {
                     delta_red += 1;
                 } else {
                     // We destroyed a red edge update potential
-                    red_potential -= (@intCast(i64, self.node_list[item].red_edges.cardinality()) * @intCast(i64, self.node_list[item].red_edges.cardinality()));
+                    red_potential -= @intCast(i64, self.node_list[item].red_edges.cardinality());
                     new_red_edges -= 1;
                 }
             }
 
-            delta_red += self.node_list[survivor].red_edges.cardinality();
+            delta_red += self.node_list[survivor].red_edges.cardinality() - correction_factor;
 
             var tww: T = 0;
             var black_iter = self.node_list[erased].black_edges.xorIterator(&self.node_list[survivor].black_edges);
@@ -501,7 +503,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[survivor].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                        red_potential += (@intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)) * @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)));
+                        red_potential += @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -510,7 +512,7 @@ pub fn Graph(comptime T: type) type {
                     if (!self.node_list[erased].red_edges.contains(item)) {
                         delta_red += 1;
                         new_red_edges += 1;
-                        red_potential += (@intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)) * @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1)));
+                        red_potential += @intCast(i64, (self.node_list[item].red_edges.cardinality() + 1));
                         tww = std.math.max(self.node_list[item].red_edges.cardinality() + 1, tww);
                     }
                 }
@@ -518,17 +520,6 @@ pub fn Graph(comptime T: type) type {
                 const current = InducedTwinWidthPotential{ .tww = tww, .cumulative_red_edges = red_potential, .delta_red_edges = std.math.maxInt(i32) };
                 if (!current.isLess(ub.*, current_tww)) {
                     return current;
-                }
-            }
-
-            if (before_red_card < delta_red) {
-                // replace by small gaussian
-                for (before_red_card + 1..delta_red + 1) |c| {
-                    red_potential += (@intCast(i64, c * c));
-                }
-            } else {
-                for (delta_red + 1..before_red_card + 1) |c| {
-                    red_potential -= (@intCast(i64, c * c));
                 }
             }
 
@@ -878,6 +869,11 @@ pub fn Graph(comptime T: type) type {
         }
 
         pub fn solveExact(self: *Self) !T {
+            const K = 20;
+            _ = K;
+            const P = 100;
+            _ = P;
+
             var org_graph = try std.ArrayList(exact_bs.MatrixGraphFromInducedSubGraph).initCapacity(self.allocator, self.connected_components.items.len);
             defer org_graph.deinit();
             defer for (org_graph.items) |*item| item.deinit();
@@ -886,62 +882,44 @@ pub fn Graph(comptime T: type) type {
                 try org_graph.append(try exact_bs.matrixGraphUnionFromInducedSubGraph(T, &cc.subgraph, self.allocator));
             }
 
-            var heu_tww = @intCast(u32, try self.solveGreedy(30));
-
-            if (true) {
-                std.debug.print("Heuristic TWW: {d}\n", .{heu_tww});
-                for (self.connected_components.items) |*cc| {
-                    if (cc.subgraph.nodes.len > 10) {
-                        std.debug.print("  -> CC: n={d} tww={d}\n", .{ cc.subgraph.nodes.len, cc.tww });
-                    }
-                }
+            var heu_tww = @intCast(u32, try self.solveGreedy(.{ .single_pass = true }));
+            if (self.number_of_nodes > 110) {
+                heu_tww = @min(heu_tww, try self.solveGreedy(.{ .single_pass = false, .timeout_seconds = 120 }));
             }
 
             var lower: T = 0;
-            while (true) {
-                var upper_bound: u32 = 0;
-                for (self.connected_components.items) |cc| {
-                    if (cc.tww > heu_tww) {
-                        return GraphError.ExactSuboptimal;
-                    }
-                    upper_bound = @max(upper_bound, cc.tww);
+
+            while (self.connected_components_min_heap.removeOrNull()) |cc| {
+                var cc_inst = &self.connected_components.items[cc.index];
+                var upper = cc_inst.tww;
+
+                if (upper <= lower) {
+                    break;
                 }
 
-                if (upper_bound <= lower) {
-                    return lower;
-                }
+                var subgraph = cc_inst.subgraph;
+                _ = subgraph;
 
-                var cc_iter = self.connected_components_min_heap.iterator();
-                while (cc_iter.next()) |cc| {
-                    var component = &self.connected_components.items[cc.index];
-                    if (component.tww < upper_bound) {
-                        if (component.subgraph.nodes.len > 10) {
-                            std.debug.print("Skip CC for the moment n={d} tww={d} | lower={d} upper={d}\n", .{ component.subgraph.nodes.len, component.tww, lower, upper_bound });
+                var improved_result = solver_bnb.solveCCExactly(T, cc_inst, self.allocator, &org_graph.items[cc.index], lower, upper + @boolToInt(self.force_exact_solver_to_solve)) catch |e| {
+                    if (e == solver_bnb.SolverError.Infeasable) {
+                        std.debug.print(" ... infeasable\n", .{});
+
+                        if (self.force_exact_solver_to_solve) {
+                            return GraphError.ExactSuboptimal;
                         }
-                        continue;
+
+                        lower = @intCast(T, upper);
+                        break;
                     }
-                    var subgraph = &org_graph.items[cc.index];
+                    std.debug.print(" ... failed\n", .{});
+                    return e;
+                };
+                std.debug.print(" ... solve with tww={d}\n", .{improved_result});
 
-                    // the exact solver treats the upper as exclusive; i.e. by setting it to the heuristic tww,
-                    // we force the solver to produce a better solution or fail.
-                    std.debug.print("Invoke exact solver with |CC|={d} lower={d} upper={d}\n", .{ component.subgraph.nodes.len, lower, upper_bound });
-                    var improved_result = solver_bnb.solveCCExactly(T, component, self.allocator, subgraph, lower, upper_bound + @boolToInt(self.force_exact_solver_to_solve)) catch |e| {
-                        if (e == solver_bnb.SolverError.Infeasable) {
-                            std.debug.print(" ... infeasable\n", .{});
+                lower = @max(lower, @intCast(T, improved_result));
 
-                            if (self.force_exact_solver_to_solve) {
-                                return GraphError.ExactSuboptimal;
-                            }
-
-                            lower = @intCast(T, upper_bound);
-                            break;
-                        }
-                        std.debug.print(" ... failed\n", .{});
-                        return e;
-                    };
-                    std.debug.print(" ... solve with tww={d}\n", .{improved_result});
-
-                    lower = @max(lower, @intCast(T, improved_result));
+                if (improved_result > upper) {
+                    return GraphError.ExactSuboptimal;
                 }
             }
 
@@ -954,13 +932,12 @@ pub fn Graph(comptime T: type) type {
             self.contraction.reset();
 
             var cc_iter = self.connected_components_min_heap.iterator();
-            var tww: T = 0;
-            _ = tww;
+            _ = cc_iter;
             var last_node: ?T = null;
 
-            while (cc_iter.next()) |cc| {
-                if (self.connected_components.items[cc.index].subgraph.nodes.len == 1) {
-                    const survivor = self.connected_components.items[cc.index].subgraph.nodes[0];
+            for (self.connected_components.items) |*cc| {
+                if (cc.subgraph.nodes.len == 1) {
+                    const survivor = cc.subgraph.nodes[0];
                     if (last_node) |ln| {
                         try self.contraction.addContraction(contraction.Contraction(T){
                             .erased = survivor,
@@ -969,8 +946,8 @@ pub fn Graph(comptime T: type) type {
                     } else {
                         last_node = survivor;
                     }
-                } else if (self.connected_components.items[cc.index].best_contraction_sequence.getLastContraction()) |ctr| {
-                    try self.contraction.append(&self.connected_components.items[cc.index].best_contraction_sequence);
+                } else if (cc.best_contraction_sequence.getLastContraction()) |ctr| {
+                    try self.contraction.append(&cc.best_contraction_sequence);
                     if (last_node) |ln| {
                         try self.contraction.addContraction(contraction.Contraction(T){
                             .erased = ctr.survivor,
@@ -983,9 +960,14 @@ pub fn Graph(comptime T: type) type {
             }
         }
 
-        pub fn solveGreedy(self: *Self, timeout_seconds: ?u64) !T {
-            const K = 20;
+        pub const SolvingOptions = struct { timeout_seconds: ?u64 = null, single_pass: bool = true };
+
+        pub fn solveGreedy(self: *Self, solving_options: SolvingOptions) !T {
+            const K = 15;
             const P = 100;
+
+            if (solving_options.timeout_seconds != null and solving_options.single_pass == true) return GraphError.ConflictingSolverOptions;
+            const timeout_seconds = solving_options.timeout_seconds;
 
             // NOTICE: This function is single pass at the moment!
             var solver = try solver_resources.SolverResources(T, K, P).init(self);
@@ -997,17 +979,18 @@ pub fn Graph(comptime T: type) type {
 
             self.contraction.reset();
             while (self.connected_components_min_heap.removeOrNull()) |cc| {
-                // Only for small exact graphs
+                if (solving_options.single_pass and self.connected_components.items[cc.index].iteration >= 2) {
+                    try self.connected_components_min_heap.add(cc);
+                    break;
+                }
 
                 var cc_inst = &self.connected_components.items[cc.index];
                 try cc_inst.resetGraph();
 
                 if (T == u8 and cc_inst.subgraph.nodes.len < 128) {
-                    var cc_tww = try cc_inst.solveGreedy(K, P, &solver, seed);
-                    cc_inst.tww = cc_tww;
+                    _ = try cc_inst.solveGreedy(K, P, &solver, seed);
                 } else {
-                    var cc_tww = try cc_inst.solveGreedyTopK(K, P, &solver, seed);
-                    cc_inst.tww = cc_tww;
+                    _ = try cc_inst.solveGreedyTopK(K, P, &solver, seed);
                 }
                 seed += 1009;
                 try self.connected_components_min_heap.add(connected_components.ConnectedComponentIndex(T){
@@ -1024,6 +1007,7 @@ pub fn Graph(comptime T: type) type {
             }
 
             const index = self.connected_components_min_heap.peek().?;
+            // Tww is twin width of the connected component with the largest twin width
             const tww = self.connected_components.items[index.index].tww;
 
             try self.combineContractionSequences();
@@ -1119,7 +1103,7 @@ pub fn Graph(comptime T: type) type {
                 .force_exact_solver_to_solve = false,
             };
 
-            var hash = try min_hash_mod.MinHashSimilarity(T, 4).init(graph_instance.allocator, 9, graph_instance.number_of_nodes);
+            var hash = try min_hash_mod.MinHashSimilarity(T, 3).init(graph_instance.allocator, 18, graph_instance.number_of_nodes);
             graph_instance.min_hash = hash;
             return graph_instance;
         }
@@ -1155,7 +1139,7 @@ pub fn Graph(comptime T: type) type {
                     }
                 } else {
                     non_trivial_components += 1;
-                    try self.connected_components.append(self.allocator, try connected_components.ConnectedComponent(T).init(self.allocator, tmp, iterator.level, self));
+                    try self.connected_components.append(self.allocator, try connected_components.ConnectedComponent(T).init(self.allocator, tmp, self));
                 }
                 current_slice_start = current_slice_ptr;
             }
